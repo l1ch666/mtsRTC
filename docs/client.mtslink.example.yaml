@@ -1,0 +1,24 @@
+mode: cnc
+auth:
+  provider: mtslink
+room:
+  id: "https://my.mts-link.ru/j/167846474/19645959806"
+crypto:
+  key: "64_hex_key_here"
+net:
+  transport: videochannel
+  dns: "8.8.8.8:53"
+socks:
+  host: "127.0.0.1"
+  port: 8808
+video:
+  codec: qrcode
+  width: 640
+  height: 360
+  fps: 15
+  bitrate: "1200k"
+  hw: none
+  qr_size: 0
+  qr_recovery: low
+data: data
+debug: false
