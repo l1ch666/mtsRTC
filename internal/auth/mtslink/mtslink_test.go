@@ -24,3 +24,17 @@ func TestParseRoomPermanentURLLeavesSessionForResolve(t *testing.T) {
 		t.Fatalf("short permanent URL must resolve session lazily, got %#v", room)
 	}
 }
+
+func TestExtractRoomInfoFromPrejoinHTML(t *testing.T) {
+	room := ExtractRoomInfo(`<html><script>window.__STATE__={"eventSessionId":"18867526566"};</script></html>`)
+	if room.SessionID != "18867526566" {
+		t.Fatalf("session id = %q", room.SessionID)
+	}
+}
+
+func TestExtractRoomInfoFromEscapedURL(t *testing.T) {
+	room := ExtractRoomInfo(`https:\/\/my.mts-link.ru\/j\/167846474\/19645959806\/stream-new\/18867526566`)
+	if room.UserID != "167846474" || room.EventID != "19645959806" || room.SessionID != "18867526566" {
+		t.Fatalf("room = %#v", room)
+	}
+}

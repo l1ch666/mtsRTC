@@ -135,8 +135,39 @@ echo "[*] Using carrier: $CARRIER"
 echo ""
 
 if [ "$CARRIER" = "mtslink" ]; then
-    TRANSPORT="videochannel"
-    echo "[*] MTS Link selected: forcing transport: $TRANSPORT"
+    echo "MTS Link mode:"
+    echo "  1) seichannel H.264/Opus tunnel (recommended for MTS Link)"
+    echo "  2) seichannel H.264/Opus + synthetic camera test"
+    echo "  3) vp8channel VP8 legacy test"
+    echo "  4) videochannel legacy (requires ffmpeg)"
+    read -p "Enter choice [1-4, default: 1]: " MTS_MODE_CHOICE
+    case "$MTS_MODE_CHOICE" in
+        2)
+            TRANSPORT="seichannel"
+            MTS_VIDEO_TEST="1"
+            MTS_VIDEO_CODEC="h264"
+            ;;
+        3)
+            TRANSPORT="vp8channel"
+            MTS_VIDEO_TEST=""
+            MTS_VIDEO_CODEC="vp8"
+            ;;
+        4)
+            TRANSPORT="videochannel"
+            MTS_VIDEO_TEST=""
+            MTS_VIDEO_CODEC="h264"
+            ;;
+        *)
+            TRANSPORT="seichannel"
+            MTS_VIDEO_TEST=""
+            MTS_VIDEO_CODEC="h264"
+            ;;
+    esac
+    MTS_FORCE_VIDEO="${MTS_FORCE_VIDEO:-1}"
+    MTS_PEER_UPDATE="${MTS_PEER_UPDATE:-1}"
+    MTS_DEBUG="${MTS_DEBUG:-1}"
+    MTS_VIDEO_CODEC="${MTS_VIDEO_CODEC:-h264}"
+    echo "[*] MTS Link selected: transport=$TRANSPORT codec=$MTS_VIDEO_CODEC video_test=${MTS_VIDEO_TEST:-0}"
     echo ""
 else
     echo "Select transport:"
@@ -244,6 +275,11 @@ fi
 echo ""
 read -p "DNS server [default: 8.8.8.8:53]: " DNS_INPUT
 DNS=${DNS_INPUT:-8.8.8.8:53}
+PODMAN_DNS_HOST="${DNS%%:*}"
+PODMAN_DNS_ARGS=()
+if [ -n "$PODMAN_DNS_HOST" ]; then
+    PODMAN_DNS_ARGS+=("--dns" "$PODMAN_DNS_HOST")
+fi
 
 echo ""
 read -p "Use SOCKS5 proxy for egress? (y/N): " USE_PROXY
@@ -381,12 +417,23 @@ fi
 mkdir -p "$GOMOD_CACHE" "$GO_BUILD_CACHE"
 echo "[*] Using Go cache: $CACHE_DIR"
 
+BUILD_SOURCE_DIR="$SOURCE_DIR"
 if [ -n "$REPO_URL" ]; then
+    CLONE_DIR="${WORK_DIR}-src"
+    rm -rf "$CLONE_DIR"
     echo "[*] Cloning repository..."
-    git clone --depth 1 --recurse-submodules --branch "$BRANCH" "$REPO_URL" "$WORK_DIR"
+    git clone --depth 1 --recurse-submodules --branch "$BRANCH" "$REPO_URL" "$CLONE_DIR"
+    BUILD_SOURCE_DIR="$CLONE_DIR"
 else
-    echo "[*] Copying local source tree..."
-    (cd "$SOURCE_DIR" && tar --exclude='.git' --exclude='olcrtc' -cf - .) | (cd "$WORK_DIR" && tar -xf -)
+    echo "[*] Using local source tree for build..."
+fi
+
+echo "[*] Preparing runtime workspace..."
+mkdir -p "$WORK_DIR"
+if [ -d "$BUILD_SOURCE_DIR/data" ]; then
+    cp -a "$BUILD_SOURCE_DIR/data" "$WORK_DIR/data"
+else
+    mkdir -p "$WORK_DIR/data"
 fi
 
 echo "[*] Pulling Go image..."
@@ -395,12 +442,14 @@ podman pull "$IMAGE_NAME"
 echo "[*] Building OlcRTC..."
 podman run --rm \
     --network host \
-    -v "$WORK_DIR":/app:Z \
+    "${PODMAN_DNS_ARGS[@]}" \
+    -v "$BUILD_SOURCE_DIR":/src:Z \
+    -v "$WORK_DIR":/out:Z \
     -v "$GOMOD_CACHE":/go/pkg/mod:Z \
     -v "$GO_BUILD_CACHE":/root/.cache/go-build:Z \
-    -w /app \
+    -w /src \
     "$IMAGE_NAME" \
-    sh -c "go mod download && go build -trimpath -ldflags='-s -w' -o olcrtc ./cmd/olcrtc"
+    sh -c "go mod download && go build -trimpath -ldflags='-s -w' -o /out/olcrtc ./cmd/olcrtc"
 
 if [ ! -f "$WORK_DIR/olcrtc" ]; then
     echo "[X] Build failed"
@@ -522,16 +571,36 @@ PODMAN_ENV_ARGS=()
 if [ -n "${MTS_COOKIE:-}" ]; then
     PODMAN_ENV_ARGS+=("-e" "MTS_COOKIE=$MTS_COOKIE")
 fi
+if [ -n "${MTS_DEBUG:-}" ]; then
+    PODMAN_ENV_ARGS+=("-e" "MTS_DEBUG=$MTS_DEBUG")
+fi
+if [ -n "${MTS_FORCE_VIDEO:-}" ]; then
+    PODMAN_ENV_ARGS+=("-e" "MTS_FORCE_VIDEO=$MTS_FORCE_VIDEO")
+fi
+if [ -n "${MTS_PEER_UPDATE:-}" ]; then
+    PODMAN_ENV_ARGS+=("-e" "MTS_PEER_UPDATE=$MTS_PEER_UPDATE")
+fi
+if [ -n "${MTS_VIDEO_TEST:-}" ]; then
+    PODMAN_ENV_ARGS+=("-e" "MTS_VIDEO_TEST=$MTS_VIDEO_TEST")
+fi
+if [ -n "${MTS_VIDEO_CODEC:-}" ]; then
+    PODMAN_ENV_ARGS+=("-e" "MTS_VIDEO_CODEC=$MTS_VIDEO_CODEC")
+fi
 
 echo "[*] Starting OlcRTC server..."
 START_CMD="./olcrtc server.yaml"
-if [ "$TRANSPORT" = "videochannel" ]; then
+if [ "$TRANSPORT" = "videochannel" ] && [ "$CARRIER" != "mtslink" ]; then
     START_CMD="apk add --no-cache ffmpeg >/dev/null && ./olcrtc server.yaml"
+fi
+RESTART_POLICY="unless-stopped"
+if [ "$CARRIER" = "mtslink" ]; then
+    RESTART_POLICY="${MTS_RESTART_POLICY:-no}"
 fi
 podman run -d \
     --network host \
+    "${PODMAN_DNS_ARGS[@]}" \
     --name "$CONTAINER_NAME" \
-    --restart unless-stopped \
+    --restart "$RESTART_POLICY" \
     "${PODMAN_ENV_ARGS[@]}" \
     -v "$WORK_DIR":/app:Z \
     -w /app \

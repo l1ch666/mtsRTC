@@ -46,6 +46,7 @@ func (Provider) Issue(ctx context.Context, cfg auth.Config) (auth.Credentials, e
 			ExtraJoinToken:    bootstrap.JoinToken,
 			ExtraPublishToken: bootstrap.PublishToken,
 			ExtraConferenceID: bootstrap.ConferenceID,
+			ExtraConnectionID: bootstrap.ConnectionID,
 			ExtraRoomURL:      appendSessionID(roomURL, bootstrap.Room.SessionID),
 			ExtraDID:          bootstrap.DID,
 			ExtraPID:          bootstrap.PID,

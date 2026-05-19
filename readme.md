@@ -1,5 +1,16 @@
 # olcRTC MTS Link Universal Carrier fork
 
+## 2026-05-19 update
+
+The MTS Link core is updated to the same implementation used by XLTD VPN
+`1.9.0` / Windows `0.5.0-beta`: hardened guest bot bootstrap, visible-H.264
+diagnostics, post-join peer update, silent Opus RTP, and safer token parsing.
+
+For a normal VPN profile keep `videochannel` H.264 defaults. To debug whether
+the MTS Link lobby renders the bot camera, run the client/server with
+`MTS_VIDEO_TEST=1`; that mode publishes synthetic visible H.264 frames and is
+not the normal data-carrying VPN path.
+
 Готовый архив-форк `openlibrecommunity/olcrtc` ветки `refactor/universal-carrier` с дополнительным carrier:
 
 ```text

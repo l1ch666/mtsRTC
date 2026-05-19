@@ -1,5 +1,18 @@
 # olcRTC Universal Carrier + MTS Link fork
 
+## 2026-05-19 core status
+
+This document describes the updated MTS Link fork used by XLTD VPN `1.9.0`.
+The carrier now follows the tested guest-bot sequence more closely:
+prejoin cookies, guestlogin, login lookup, connection/conference creation,
+join-token extraction, publish-token fallback, SFU join, peer update, repeated
+pinning, and silent Opus RTP.
+
+Camera visibility note: the normal VPN path sends tunnel frames through H.264
+`videochannel`; those frames may not look like a human camera in the lobby.
+`MTS_VIDEO_TEST=1` switches to synthetic visible H.264 frames only for
+diagnosing whether MTS Link renders the bot tile.
+
 Этот архив — готовый fork `olcrtc` ветки `refactor/universal-carrier`, подогнанный под XLTD VPN project и MTS Link carrier.
 
 Что изменено:
@@ -97,3 +110,8 @@ debug: false
 ```
 
 Если запускаешь из распакованного архива, `--repo-url` не нужен: скрипт берёт локальный исходник.
+
+
+## MTS Link codec note
+
+MTS Link WebRTC expects an H.264/Opus media shape. For this fork the recommended quick-start mode is `seichannel`, because it publishes H.264 video samples and carries olcRTC data in H.264 SEI payloads. `vp8channel` is left only as a legacy/diagnostic mode and is not expected to be accepted by MTS SFU on H.264-only rooms.

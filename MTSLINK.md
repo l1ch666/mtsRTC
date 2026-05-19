@@ -85,6 +85,38 @@ data: data
 debug: false
 ```
 
+## 2026-05-19 core update
+
+This fork is aligned with the XLTD VPN `1.9.0` / Windows `0.5.0-beta`
+MTS Link core:
+
+- guest flow opens prejoin pages, performs `guestlogin`, fetches `/api/login`,
+  creates connection/conference records, and only then requests SFU join tokens;
+- connection or guestlogin tokens are no longer treated as SFU join tokens;
+- conference `privateKey` is used as the SFU publish token when present;
+- the peer is updated after initial SFU join so local H.264 video can be attached
+  in the same shape as the tested bot flow;
+- a silent Opus RTP sender is enabled by default to keep the participant closer
+  to a real browser with an audio publisher;
+- visible H.264 diagnostic frames are available through `MTS_VIDEO_TEST=1`.
+
+Recommended XLTD URI parameters:
+
+```text
+mts-peer-update=1&mts-silent-audio=1&mts-force-video=1
+```
+
+Diagnostics:
+
+- `MTS_DEBUG=1` prints bootstrap request misses.
+- `MTS_VIDEO_TEST=1` publishes synthetic visible H.264 camera frames instead of
+  the VPN video track. Use this only to check whether the MTS lobby renders the
+  bot camera.
+- `MTS_VIDEO_CODEC=h264` is the default diagnostic camera codec; `vp8` is kept
+  only as a legacy probe.
+- `MTS_FORCE_VIDEO=0`, `MTS_PEER_UPDATE=0`, or `MTS_SILENT_AUDIO=0` disable the
+  corresponding compatibility path.
+
 ## GitHub fork usage
 
 Если зальёшь этот архив в свой fork, можно запускать удалённую ветку так:
