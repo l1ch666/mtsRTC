@@ -3,8 +3,11 @@
 ## 2026-05-19 update
 
 The MTS Link core is updated to the same implementation used by XLTD VPN
-`1.9.0` / Windows `0.5.0-beta`: hardened guest bot bootstrap, visible-H.264
+`1.9.1` / Windows `0.5.1-beta`: hardened guest bot bootstrap, visible-H.264
 diagnostics, post-join peer update, silent Opus RTP, and safer token parsing.
+The latest patch also keeps incoming and outgoing MTS video m-lines separate
+and frames ffmpeg H.264 output as complete Annex-B access units before WebRTC
+send.
 
 For a normal VPN profile keep `videochannel` H.264 defaults. To debug whether
 the MTS Link lobby renders the bot camera, run the client/server with

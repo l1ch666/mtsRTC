@@ -87,7 +87,7 @@ debug: false
 
 ## 2026-05-19 core update
 
-This fork is aligned with the XLTD VPN `1.9.0` / Windows `0.5.0-beta`
+This fork is aligned with the XLTD VPN `1.9.1` / Windows `0.5.1-beta`
 MTS Link core:
 
 - guest flow opens prejoin pages, performs `guestlogin`, fetches `/api/login`,
@@ -99,6 +99,11 @@ MTS Link core:
 - a silent Opus RTP sender is enabled by default to keep the participant closer
   to a real browser with an audio publisher;
 - visible H.264 diagnostic frames are available through `MTS_VIDEO_TEST=1`.
+- outgoing H.264 QR/videochannel media is now attached as a separate sendonly
+  transceiver so the original video receiver remains available for peer tunnel
+  frames;
+- raw ffmpeg H.264 output is split into complete Annex-B access units before
+  it is written to WebRTC, avoiding random pipe-buffer chunks as samples.
 
 Recommended XLTD URI parameters:
 

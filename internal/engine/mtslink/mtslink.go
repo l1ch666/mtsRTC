@@ -385,16 +385,20 @@ func (s *Session) publishLocalVideoTracks(ctx context.Context, pc *webrtc.PeerCo
 		s.connectedTracks[track] = true
 		s.videoTrackMu.Unlock()
 
-		sender, err := pc.AddTrack(track)
+		transceiver, err := pc.AddTransceiverFromTrack(track, webrtc.RTPTransceiverInit{
+			Direction: webrtc.RTPTransceiverDirectionSendonly,
+		})
 		if err != nil {
-			return published, fmt.Errorf("mtslink add local video track after join: %w", err)
+			return published, fmt.Errorf("mtslink add local video transceiver after join: %w", err)
 		}
 		published++
-		s.wg.Add(1)
-		go s.drainRTCP(sender)
+		if sender := transceiver.Sender(); sender != nil {
+			s.wg.Add(1)
+			go s.drainRTCP(sender)
+		}
 	}
 	if published > 0 {
-		logger.Infof("mtslink: local video tracks attached after initial join=%d", published)
+		logger.Infof("mtslink: local video sendonly tracks attached after initial join=%d", published)
 	}
 	return published, ctx.Err()
 }
@@ -797,8 +801,15 @@ func (s *Session) AddVideoTrack(track webrtc.TrackLocal) error {
 	s.connectedTracks[track] = true
 	s.videoTrackMu.Unlock()
 
-	if _, err := pc.AddTrack(track); err != nil {
-		return fmt.Errorf("mtslink add video track: %w", err)
+	transceiver, err := pc.AddTransceiverFromTrack(track, webrtc.RTPTransceiverInit{
+		Direction: webrtc.RTPTransceiverDirectionSendonly,
+	})
+	if err != nil {
+		return fmt.Errorf("mtslink add video transceiver: %w", err)
+	}
+	if sender := transceiver.Sender(); sender != nil {
+		s.wg.Add(1)
+		go s.drainRTCP(sender)
 	}
 	return nil
 }

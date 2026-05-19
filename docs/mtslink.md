@@ -2,11 +2,14 @@
 
 ## 2026-05-19 core status
 
-This document describes the updated MTS Link fork used by XLTD VPN `1.9.0`.
+This document describes the updated MTS Link fork used by XLTD VPN `1.9.1`.
 The carrier now follows the tested guest-bot sequence more closely:
 prejoin cookies, guestlogin, login lookup, connection/conference creation,
 join-token extraction, publish-token fallback, SFU join, peer update, repeated
 pinning, and silent Opus RTP.
+The current H.264 videochannel path publishes outgoing tunnel video on its own
+sendonly m-line and preserves a separate incoming video receiver; ffmpeg raw
+H.264 output is also reframed into complete Annex-B access units before send.
 
 Camera visibility note: the normal VPN path sends tunnel frames through H.264
 `videochannel`; those frames may not look like a human camera in the lobby.
