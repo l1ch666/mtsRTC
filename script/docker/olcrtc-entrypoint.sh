@@ -55,8 +55,15 @@ case "$mode" in
     srv|cnc) ;;
     *) die "set OLCRTC_MODE to srv or cnc" ;;
 esac
-[ -n "$carrier" ] || die "set OLCRTC_CARRIER (e.g. jitsi, telemost, wbstream)"
+[ -n "$carrier" ] || die "set OLCRTC_CARRIER (e.g. jitsi, telemost, wbstream, mtslink)"
 [ -n "$transport" ] || die "set OLCRTC_TRANSPORT (e.g. datachannel, videochannel, seichannel, vp8channel)"
+
+if [ "$carrier" = "mtslink" ] && [ "$transport" = "seichannel" ]; then
+    [ "$sei_fps" = "0" ] && sei_fps=30
+    [ "$sei_batch" = "0" ] && sei_batch=8
+    [ "$sei_frag" = "0" ] && sei_frag=700
+    [ "$sei_ack" = "0" ] && sei_ack=10000
+fi
 
 make_key() {
     if command -v od >/dev/null 2>&1; then
@@ -107,6 +114,19 @@ net:
   dns: "$dns_server"
 data: "$data_dir"
 EOF
+
+if [ "$carrier" = "mtslink" ]; then
+    cat >> "$config" <<EOF
+liveness:
+  interval: 20s
+  timeout: 15s
+  failures: 6
+traffic:
+  max_payload_size: 1200
+  min_delay: 4ms
+  max_delay: 18ms
+EOF
+fi
 
 if [ "$mode" = "srv" ] && [ -n "$socks_proxy" ]; then
     cat >> "$config" <<EOF

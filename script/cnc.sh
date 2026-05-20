@@ -86,7 +86,8 @@ echo "Select auth provider:"
 echo "  1) jitsi"
 echo "  2) telemost"
 echo "  3) wbstream"
-read -p "Enter choice [1-3, default: 1]: " AUTH_CHOICE
+echo "  4) mtslink"
+read -p "Enter choice [1-4, default: 1]: " AUTH_CHOICE
 
 case "$AUTH_CHOICE" in
     2)
@@ -94,6 +95,9 @@ case "$AUTH_CHOICE" in
         ;;
     3)
         AUTH="wbstream"
+        ;;
+    4)
+        AUTH="mtslink"
         ;;
     *)
         AUTH="jitsi"
@@ -210,6 +214,13 @@ VIDEO_TILE_MODULE=4; VIDEO_TILE_RS=20
 VP8_FPS=25; VP8_BATCH=1
 SEI_FPS=60; SEI_BATCH=64; SEI_FRAG=900; SEI_ACK=2000
 
+if [ "$AUTH" = "mtslink" ] && [ "$TRANSPORT" = "seichannel" ]; then
+    SEI_FPS=30
+    SEI_BATCH=8
+    SEI_FRAG=700
+    SEI_ACK=10000
+fi
+
 if [ "$TRANSPORT" = "videochannel" ]; then
     echo ""
     echo "--- Videochannel settings ---"
@@ -275,17 +286,17 @@ if [ "$TRANSPORT" = "seichannel" ]; then
     echo ""
     echo "--- SEIchannel settings ---"
 
-    read -p "SEI FPS [default: 60]: " SEIFPS_INPUT
-    SEI_FPS=${SEIFPS_INPUT:-60}
+    read -p "SEI FPS [default: $SEI_FPS]: " SEIFPS_INPUT
+    SEI_FPS=${SEIFPS_INPUT:-$SEI_FPS}
 
-    read -p "SEI batch size (frames per tick) [default: 64]: " SEIBATCH_INPUT
-    SEI_BATCH=${SEIBATCH_INPUT:-64}
+    read -p "SEI batch size (frames per tick) [default: $SEI_BATCH]: " SEIBATCH_INPUT
+    SEI_BATCH=${SEIBATCH_INPUT:-$SEI_BATCH}
 
-    read -p "SEI fragment size in bytes [default: 900]: " SEIFRAG_INPUT
-    SEI_FRAG=${SEIFRAG_INPUT:-900}
+    read -p "SEI fragment size in bytes [default: $SEI_FRAG]: " SEIFRAG_INPUT
+    SEI_FRAG=${SEIFRAG_INPUT:-$SEI_FRAG}
 
-    read -p "SEI ACK timeout in milliseconds [default: 2000]: " SEIACK_INPUT
-    SEI_ACK=${SEIACK_INPUT:-2000}
+    read -p "SEI ACK timeout in milliseconds [default: $SEI_ACK]: " SEIACK_INPUT
+    SEI_ACK=${SEIACK_INPUT:-$SEI_ACK}
 fi
 
 echo ""
@@ -350,6 +361,19 @@ socks:
   host: "$SOCKS_IP"
   port: $SOCKS_PORT
 EOF
+
+if [ "$AUTH" = "mtslink" ]; then
+    cat >> "$CONFIG_FILE" <<EOF
+liveness:
+  interval: 20s
+  timeout: 15s
+  failures: 6
+traffic:
+  max_payload_size: 1200
+  min_delay: 4ms
+  max_delay: 18ms
+EOF
+fi
 
 if [ -n "$SOCKS_USER" ]; then
     cat >> "$CONFIG_FILE" <<EOF
