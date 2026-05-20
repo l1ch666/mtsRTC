@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/openlibrecommunity/olcrtc/internal/control"
+	"github.com/openlibrecommunity/olcrtc/internal/crypto"
 	"github.com/openlibrecommunity/olcrtc/internal/runtime"
 )
 
@@ -44,11 +45,16 @@ func TestSmuxConfigDefault(t *testing.T) {
 }
 
 func TestSmuxConfigShrinks(t *testing.T) {
-	// 100-byte wire payload minus crypto overhead is far below default 32768,
-	// so MaxFrameSize must shrink.
-	cfg := runtime.SmuxConfig(100)
+	const (
+		wirePayload         = 1200
+		smuxFrameHeaderSize = 8
+	)
+	cfg := runtime.SmuxConfig(wirePayload)
 	if cfg.MaxFrameSize >= 32768 {
 		t.Fatalf("MaxFrameSize = %d, want shrunk", cfg.MaxFrameSize)
+	}
+	if got := cfg.MaxFrameSize + smuxFrameHeaderSize + crypto.WireOverhead; got > wirePayload {
+		t.Fatalf("wire payload = %d, want <= %d", got, wirePayload)
 	}
 }
 

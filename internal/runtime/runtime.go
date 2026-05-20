@@ -42,17 +42,20 @@ func SetupCipher(keyHex string) (*crypto.Cipher, error) {
 	return cipher, nil
 }
 
+const smuxFrameHeaderSize = 8
+
 // SmuxConfig returns the tuned smux config used on both ends. Both peers
-// must agree on Version and MaxFrameSize. maxWirePayload, when > 0,
-// constrains the max frame size to fit under the transport's per-message
-// payload cap minus the AEAD wire overhead.
+// must agree on Version. maxWirePayload, when > 0, constrains the max stream
+// data frame so the whole smux frame plus AEAD wire overhead fits under the
+// transport's per-message payload cap.
 func SmuxConfig(maxWirePayload int) *smux.Config {
 	cfg := smux.DefaultConfig()
 	cfg.Version = 2
 	cfg.KeepAliveDisabled = false
 	cfg.MaxFrameSize = 32768
-	if maxWirePayload > crypto.WireOverhead {
-		maxFrameSize := maxWirePayload - crypto.WireOverhead
+	wireOverhead := crypto.WireOverhead + smuxFrameHeaderSize
+	if maxWirePayload > wireOverhead {
+		maxFrameSize := maxWirePayload - wireOverhead
 		if maxFrameSize < cfg.MaxFrameSize {
 			cfg.MaxFrameSize = maxFrameSize
 		}

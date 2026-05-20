@@ -19,6 +19,8 @@ import (
 	"github.com/xtaci/smux"
 )
 
+const smuxFrameHeaderSize = 8
+
 const (
 	testConnectAddr = "127.0.0.1"
 	testConnectCmd  = connectCommand
@@ -53,9 +55,10 @@ func TestSmuxConfig(t *testing.T) {
 		t.Fatalf("smuxConfig(0) = %+v", cfg)
 	}
 	capped := smuxConfig(4096)
-	if capped.MaxFrameSize != 4096-cryptopkg.WireOverhead {
+	want := 4096 - cryptopkg.WireOverhead - smuxFrameHeaderSize
+	if capped.MaxFrameSize != want {
 		t.Fatalf("smuxConfig(4096).MaxFrameSize = %d, want %d",
-			capped.MaxFrameSize, 4096-cryptopkg.WireOverhead)
+			capped.MaxFrameSize, want)
 	}
 }
 
