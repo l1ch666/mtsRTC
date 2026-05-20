@@ -10,7 +10,6 @@ import (
 	"github.com/openlibrecommunity/olcrtc/internal/engine"
 	enginebuiltin "github.com/openlibrecommunity/olcrtc/internal/engine/builtin"
 	"github.com/openlibrecommunity/olcrtc/internal/transport"
-	"github.com/openlibrecommunity/olcrtc/internal/transport/common"
 	"github.com/pion/webrtc/v4"
 )
 
@@ -76,10 +75,10 @@ func (s *fakeEngineSession) SetEndedCallback(cb func(string))  { s.stream.SetEnd
 func (s *fakeEngineSession) WatchConnection(ctx context.Context) {
 	s.stream.WatchConnection(ctx)
 }
-func (s *fakeEngineSession) CanSend() bool                            { return s.stream.CanSend() }
-func (s *fakeEngineSession) GetSendQueue() chan []byte                { return nil }
-func (s *fakeEngineSession) GetBufferedAmount() uint64                { return 0 }
-func (s *fakeEngineSession) AddVideoTrack(t webrtc.TrackLocal) error  { return s.stream.AddTrack(t) }
+func (s *fakeEngineSession) CanSend() bool                           { return s.stream.CanSend() }
+func (s *fakeEngineSession) GetSendQueue() chan []byte               { return nil }
+func (s *fakeEngineSession) GetBufferedAmount() uint64               { return 0 }
+func (s *fakeEngineSession) AddVideoTrack(t webrtc.TrackLocal) error { return s.stream.AddTrack(t) }
 func (s *fakeEngineSession) SetVideoTrackHandler(cb func(*webrtc.TrackRemote, *webrtc.RTPReceiver)) {
 	s.stream.SetTrackHandler(cb)
 }
@@ -169,7 +168,7 @@ func TestSendAckAndClosePaths(t *testing.T) {
 		outboundAck: make(chan []byte, 8),
 		closeCh:     make(chan struct{}),
 		writerDone:  make(chan struct{}),
-		acks:        common.NewAckRegistry(),
+		acks:        newFragAckTracker(),
 	}
 
 	done := make(chan error, 1)
@@ -182,7 +181,7 @@ func TestSendAckAndClosePaths(t *testing.T) {
 		if err != nil {
 			t.Fatalf("decodeTransportFrame() error = %v", err)
 		}
-		tr.resolveAck(decoded.seq, crc32.ChecksumIEEE(payload))
+		tr.resolveAck(decoded.seq, crc32.ChecksumIEEE(payload), decoded.fragIdx)
 	case <-time.After(time.Second):
 		t.Fatal("Send() did not enqueue frame")
 	}
@@ -195,5 +194,19 @@ func TestSendAckAndClosePaths(t *testing.T) {
 	}
 	if err := tr.Send([]byte("closed")); !errors.Is(err, ErrTransportClosed) {
 		t.Fatalf("Send(closed) error = %v, want %v", err, ErrTransportClosed)
+	}
+}
+
+func TestPerAttemptAckTimeoutScalesWithWriterRate(t *testing.T) {
+	tr := &streamTransport{
+		frameInterval: 50 * time.Millisecond,
+		batchSize:     4,
+		ackTimeout:    1500 * time.Millisecond,
+	}
+	if got := tr.perAttemptAckTimeout(1); got != 1500*time.Millisecond {
+		t.Fatalf("perAttemptAckTimeout(1) = %v, want configured floor", got)
+	}
+	if got := tr.perAttemptAckTimeout(80); got != 4*time.Second {
+		t.Fatalf("perAttemptAckTimeout(80) = %v, want 4s", got)
 	}
 }

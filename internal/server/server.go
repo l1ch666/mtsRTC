@@ -24,7 +24,10 @@ import (
 	"github.com/xtaci/smux"
 )
 
-const connectCommand = "connect"
+const (
+	connectCommand            = "connect"
+	connectRequestReadTimeout = 30 * time.Second
+)
 
 var (
 	// ErrKeyRequired re-exports runtime.ErrKeyRequired for compatibility with
@@ -795,7 +798,7 @@ func (s *Server) handleStream(_ context.Context, stream *smux.Stream, sessionID 
 	const maxConnReq = 4096
 	header := make([]byte, 0, 256)
 	tmp := make([]byte, 256)
-	_ = stream.SetReadDeadline(time.Now().Add(15 * time.Second))
+	_ = stream.SetReadDeadline(time.Now().Add(connectRequestReadTimeout))
 	for {
 		n, err := stream.Read(tmp)
 		if n > 0 {

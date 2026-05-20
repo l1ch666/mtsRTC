@@ -27,6 +27,11 @@ import (
 	"github.com/xtaci/smux"
 )
 
+const (
+	connectRequestWriteTimeout = 30 * time.Second
+	connectRequestAckTimeout   = 30 * time.Second
+)
+
 var (
 	// ErrConnectFailed is returned when a tunnel connection fails.
 	ErrConnectFailed = errors.New("tunnel connection failed")
@@ -634,14 +639,14 @@ func (c *Client) sendConnectRequest(stream *smux.Stream, targetAddr string, targ
 		return fmt.Errorf("sid=%d marshal connect req: %w", stream.ID(), err)
 	}
 
-	_ = stream.SetWriteDeadline(time.Now().Add(10 * time.Second))
+	_ = stream.SetWriteDeadline(time.Now().Add(connectRequestWriteTimeout))
 	if _, err := stream.Write(connectReq); err != nil {
 		return fmt.Errorf("sid=%d write connect req: %w", stream.ID(), err)
 	}
 	_ = stream.SetWriteDeadline(time.Time{})
 
 	ack := make([]byte, 1)
-	_ = stream.SetReadDeadline(time.Now().Add(15 * time.Second))
+	_ = stream.SetReadDeadline(time.Now().Add(connectRequestAckTimeout))
 	if _, err := io.ReadFull(stream, ack); err != nil || ack[0] != 0x00 {
 		return fmt.Errorf("sid=%d: %w (read_err=%w ack=%v)", stream.ID(), ErrRemoteNotReady, err, ack)
 	}

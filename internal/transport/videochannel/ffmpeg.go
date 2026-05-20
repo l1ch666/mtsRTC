@@ -18,6 +18,7 @@ import (
 	"github.com/pion/rtp"
 	"github.com/pion/rtp/codecs"
 	"github.com/pion/webrtc/v4"
+	"github.com/pion/webrtc/v4/pkg/media/h264reader"
 	"github.com/pion/webrtc/v4/pkg/media/ivfreader"
 )
 
@@ -57,7 +58,10 @@ type codecSpec struct {
 	encodeArgs   []string
 }
 
-func codecSpecForCarrier(_ string) codecSpec {
+func codecSpecForCarrier(carrier string) codecSpec {
+	if strings.EqualFold(carrier, "mtslink") {
+		return h264CodecSpec()
+	}
 	return vp8CodecSpec()
 }
 
@@ -86,9 +90,13 @@ func h264CodecSpec() codecSpec {
 		depacketizer: func() rtp.Depacketizer { return &codecs.H264Packet{} },
 		encodeArgs: []string{
 			argCodecVideo, "libx264",
+			"-profile:v", "baseline",
+			"-level", "3.1",
 			"-preset", "ultrafast",
 			"-tune", "zerolatency",
 			"-g", "1",
+			"-bf", "0",
+			"-x264-params", "keyint=1:min-keyint=1:scenecut=0:repeat-headers=1",
 			argPixFmt, pixFmtYUV420P,
 		},
 	}
@@ -317,23 +325,93 @@ func (e *ffmpegEncoder) readIVF(stdout io.Reader) {
 
 func (e *ffmpegEncoder) readRawH264(stdout io.Reader) {
 	defer close(e.frames)
-	buf := make([]byte, 1024*1024)
-	for {
-		n, err := stdout.Read(buf)
-		if err != nil {
-			if !e.closed.Load() {
-				e.setErr(fmt.Errorf("encoder h264 read: %w", err))
-			}
-			return
+	err := readH264AccessUnits(stdout, func(sample []byte) bool {
+		if e.closed.Load() {
+			return false
 		}
-		if n > 0 {
-			copyFrame := append([]byte(nil), buf[:n]...)
-			if e.closed.Load() {
-				return
+		e.frames <- sample
+		return true
+	})
+	if err != nil && !e.closed.Load() {
+		e.setErr(fmt.Errorf("encoder h264 read: %w", err))
+	}
+}
+
+func readH264AccessUnits(in io.Reader, emit func([]byte) bool) error {
+	reader, err := h264reader.NewReaderWithOptions(in, h264reader.WithIncludeSEI(true))
+	if err != nil {
+		return err
+	}
+
+	var accessUnit []byte
+	seenVCL := false
+	flush := func() bool {
+		if len(accessUnit) == 0 {
+			return true
+		}
+		sample := append([]byte(nil), accessUnit...)
+		accessUnit = nil
+		seenVCL = false
+		return emit(sample)
+	}
+
+	for {
+		nal, err := reader.NextNAL()
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				flush()
+				return nil
 			}
-			e.frames <- copyFrame
+			return err
+		}
+		if nal == nil || len(nal.Data) == 0 {
+			continue
+		}
+
+		if h264StartsNextAccessUnit(nal.UnitType, seenVCL, len(accessUnit) > 0) {
+			if !flush() {
+				return nil
+			}
+		}
+		accessUnit = appendAnnexBNAL(accessUnit, nal.Data)
+		if h264IsVCL(nal.UnitType) {
+			seenVCL = true
 		}
 	}
+}
+
+func h264StartsNextAccessUnit(unit h264reader.NalUnitType, seenVCL, hasAccessUnit bool) bool {
+	if !hasAccessUnit || !seenVCL {
+		return false
+	}
+	switch unit {
+	case h264reader.NalUnitTypeAUD,
+		h264reader.NalUnitTypeSPS,
+		h264reader.NalUnitTypePPS,
+		h264reader.NalUnitTypeSEI:
+		return true
+	default:
+		return false
+	}
+}
+
+func h264IsVCL(unit h264reader.NalUnitType) bool {
+	switch unit {
+	case h264reader.NalUnitTypeCodedSliceNonIdr,
+		h264reader.NalUnitTypeCodedSliceDataPartitionA,
+		h264reader.NalUnitTypeCodedSliceDataPartitionB,
+		h264reader.NalUnitTypeCodedSliceDataPartitionC,
+		h264reader.NalUnitTypeCodedSliceIdr,
+		h264reader.NalUnitTypeCodedSliceAux:
+		return true
+	default:
+		return false
+	}
+}
+
+func appendAnnexBNAL(dst, nal []byte) []byte {
+	dst = append(dst, 0x00, 0x00, 0x00, 0x01)
+	return append(dst, nal...)
 }
 
 func (e *ffmpegEncoder) setErr(err error) {
@@ -569,8 +647,8 @@ func writeIVFHeader(w io.Writer, fourCC string, width, height, frameRate int) er
 	binary.LittleEndian.PutUint16(header[4:6], 0)
 	binary.LittleEndian.PutUint16(header[6:8], 32)
 	copy(header[8:12], []byte(fourCC))
-	binary.LittleEndian.PutUint16(header[12:14], uint16(width)) //nolint:gosec,lll // G115: bounded conversion verified by surrounding logic
-	binary.LittleEndian.PutUint16(header[14:16], uint16(height)) //nolint:gosec,lll // G115: bounded conversion verified by surrounding logic
+	binary.LittleEndian.PutUint16(header[12:14], uint16(width))     //nolint:gosec,lll // G115: bounded conversion verified by surrounding logic
+	binary.LittleEndian.PutUint16(header[14:16], uint16(height))    //nolint:gosec,lll // G115: bounded conversion verified by surrounding logic
 	binary.LittleEndian.PutUint32(header[16:20], uint32(frameRate)) //nolint:gosec,lll // G115: bounded conversion verified by surrounding logic
 	binary.LittleEndian.PutUint32(header[20:24], 1)
 	binary.LittleEndian.PutUint32(header[24:28], 0)

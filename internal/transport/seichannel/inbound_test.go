@@ -30,6 +30,7 @@ func TestInboundAssemblyAndAck(t *testing.T) {
 	if len(got) != 0 {
 		t.Fatalf("onData called before message complete: %q", got)
 	}
+	assertNextAck(t, tr.outboundAck, 1, crc, 1)
 
 	tr.handleInboundFrame(transportFrame{
 		typ:       frameTypeData,
@@ -43,15 +44,7 @@ func TestInboundAssemblyAndAck(t *testing.T) {
 	if !bytes.Equal(got, payload) {
 		t.Fatalf("assembled payload = %q, want %q", got, payload)
 	}
-	select {
-	case ack := <-tr.outboundAck:
-		frame, err := decodeTransportFrame(ack)
-		if err != nil || frame.typ != frameTypeAck || frame.seq != 1 || frame.crc != crc {
-			t.Fatalf("ack frame = %+v err=%v", frame, err)
-		}
-	default:
-		t.Fatal("handleInboundFrame() did not enqueue ack")
-	}
+	assertNextAck(t, tr.outboundAck, 1, crc, 0)
 
 	got = nil
 	tr.handleInboundFrame(transportFrame{
@@ -66,6 +59,7 @@ func TestInboundAssemblyAndAck(t *testing.T) {
 	if got != nil {
 		t.Fatalf("duplicate delivered payload again: %q", got)
 	}
+	assertNextAck(t, tr.outboundAck, 1, crc, 0)
 }
 
 func TestInboundRejectsBadCRC(t *testing.T) {
@@ -86,5 +80,18 @@ func TestInboundRejectsBadCRC(t *testing.T) {
 	})
 	if called {
 		t.Fatal("handleInboundFrame() delivered payload with bad crc")
+	}
+}
+
+func assertNextAck(t *testing.T, ch <-chan []byte, seq, crc uint32, fragIdx uint16) {
+	t.Helper()
+	select {
+	case ack := <-ch:
+		frame, err := decodeTransportFrame(ack)
+		if err != nil || frame.typ != frameTypeAck || frame.seq != seq || frame.crc != crc || frame.fragIdx != fragIdx {
+			t.Fatalf("ack frame = %+v err=%v, want seq=%d crc=%d frag=%d", frame, err, seq, crc, fragIdx)
+		}
+	default:
+		t.Fatal("handleInboundFrame() did not enqueue ack")
 	}
 }

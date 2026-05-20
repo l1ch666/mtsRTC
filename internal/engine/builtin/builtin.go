@@ -13,12 +13,14 @@ import (
 
 	"github.com/openlibrecommunity/olcrtc/internal/auth"
 	authJitsi "github.com/openlibrecommunity/olcrtc/internal/auth/jitsi"
+	authMTSLink "github.com/openlibrecommunity/olcrtc/internal/auth/mtslink"
 	authTelemost "github.com/openlibrecommunity/olcrtc/internal/auth/telemost"
 	authWBStream "github.com/openlibrecommunity/olcrtc/internal/auth/wbstream"
 	"github.com/openlibrecommunity/olcrtc/internal/engine"
 	_ "github.com/openlibrecommunity/olcrtc/internal/engine/goolom"  // register goolom engine via init
 	_ "github.com/openlibrecommunity/olcrtc/internal/engine/jitsi"   // register jitsi engine via init
 	_ "github.com/openlibrecommunity/olcrtc/internal/engine/livekit" // register livekit engine via init
+	_ "github.com/openlibrecommunity/olcrtc/internal/engine/mtslink" // register mtslink engine via init
 )
 
 // ErrCarrierNotFound is returned when an unregistered carrier name is requested.
@@ -79,6 +81,7 @@ func RegisterDefaults() {
 	registerEngineAuth("wbstream", authWBStream.Provider{})
 	registerEngineAuth("telemost", authTelemost.Provider{})
 	registerEngineAuth("jitsi", authJitsi.Provider{})
+	registerEngineAuth("mtslink", authMTSLink.Provider{})
 	registerDirect("none")
 }
 

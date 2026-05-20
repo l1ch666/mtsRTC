@@ -29,7 +29,7 @@ const (
 	defaultFPS                   = 20
 	defaultBatchSize             = 1
 	defaultConnectTimeout        = 30 * time.Second
-	maxSendAttempts              = 4
+	maxSendAttempts              = 8
 	sampleBuilderMaxLate         = 128
 	protocolMagic         uint32 = 0x4f564331 // OVC1
 	protocolVersion       byte   = 1
@@ -97,7 +97,7 @@ type streamTransport struct {
 	peerReady     atomic.Bool
 	sendMu        sync.Mutex
 	startWriter   sync.Once
-	acks          *common.AckRegistry
+	acks          *fragAckTracker
 	reassembler   *common.Reassembler
 	fragmentSize  int
 	ackTimeout    time.Duration
@@ -159,7 +159,7 @@ func New(ctx context.Context, cfg transport.Config) (transport.Transport, error)
 		outboundAck:   make(chan []byte, 64),
 		closeCh:       make(chan struct{}),
 		writerDone:    make(chan struct{}),
-		acks:          common.NewAckRegistry(),
+		acks:          newFragAckTracker(),
 		reassembler:   common.NewReassembler(256),
 		fragmentSize:  opts.FragmentSize,
 		ackTimeout:    time.Duration(opts.AckTimeoutMS) * time.Millisecond,
@@ -204,32 +204,53 @@ func (p *streamTransport) Send(data []byte) error {
 	seq := p.nextSeq.Add(1)
 	crc := crc32.ChecksumIEEE(data)
 	fragments := common.FragmentPayload(data, p.effectiveFragmentSize())
-	waiter := p.acks.Register(seq)
+	waiter := p.acks.Register(seq, crc, len(fragments))
 	defer p.acks.Unregister(seq)
 
+	pending := make([]int, len(fragments))
+	for idx := range pending {
+		pending[idx] = idx
+	}
+
 	for range maxSendAttempts {
-		for idx, fragment := range fragments {
-			frame := encodeDataFrame(seq, crc, len(data), idx, len(fragments), fragment)
+		for _, idx := range pending {
+			frame := encodeDataFrame(seq, crc, len(data), idx, len(fragments), fragments[idx])
 			if err := p.enqueueFrame(frame, false); err != nil {
 				return err
 			}
 		}
 
-		timer := time.NewTimer(p.effectiveAckTimeout())
-		select {
-		case ackCRC := <-waiter:
-			timer.Stop()
-			if ackCRC == crc {
-				return nil
-			}
-		case <-timer.C:
-		case <-p.closeCh:
-			timer.Stop()
-			return ErrTransportClosed
+		if ok, err := p.awaitFragments(waiter, p.perAttemptAckTimeout(len(pending))); err != nil {
+			return err
+		} else if ok {
+			return nil
+		}
+
+		pending = waiter.Pending()
+		if len(pending) == 0 {
+			return nil
 		}
 	}
 
 	return ErrAckTimeout
+}
+
+func (p *streamTransport) awaitFragments(waiter *fragWaiter, timeout time.Duration) (bool, error) {
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+
+	for {
+		if waiter.Done() {
+			return true, nil
+		}
+		select {
+		case <-waiter.Notify():
+		case <-timer.C:
+			return waiter.Done(), nil
+		case <-p.closeCh:
+			return false, ErrTransportClosed
+		}
+	}
 }
 
 // Close terminates the transport.
@@ -307,6 +328,27 @@ func (p *streamTransport) effectiveBatchSize() int {
 		return defaultBatchSize
 	}
 	return p.batchSize
+}
+
+func (p *streamTransport) perAttemptAckTimeout(fragmentCount int) time.Duration {
+	if fragmentCount <= 0 {
+		return p.effectiveAckTimeout()
+	}
+
+	batchSize := p.effectiveBatchSize()
+	if batchSize <= 0 {
+		batchSize = 1
+	}
+	ticks := (fragmentCount + batchSize - 1) / batchSize
+	estimated := time.Duration(ticks) * p.effectiveFrameInterval() * 4
+	if estimated < p.effectiveAckTimeout() {
+		return p.effectiveAckTimeout()
+	}
+	const maxAckTimeout = 45 * time.Second
+	if estimated > maxAckTimeout {
+		return maxAckTimeout
+	}
+	return estimated
 }
 
 func (p *streamTransport) writerLoop() {
@@ -429,7 +471,7 @@ func (p *streamTransport) handleSample(sample []byte) {
 			p.peerReady.Store(true)
 		case frameTypeAck:
 			p.peerReady.Store(true)
-			p.resolveAck(frame.seq, frame.crc)
+			p.resolveAck(frame.seq, frame.crc, frame.fragIdx)
 		case frameTypeData:
 			p.peerReady.Store(true)
 			p.handleInboundFrame(frame)
@@ -448,23 +490,25 @@ func (p *streamTransport) handleInboundFrame(frame transportFrame) {
 	})
 	switch result {
 	case common.ResultDuplicate:
-		p.sendAck(frame.seq, frame.crc)
+		p.sendAck(frame.seq, frame.crc, frame.fragIdx)
 	case common.ResultDelivered:
 		if p.onData != nil {
 			p.onData(data)
 		}
-		p.sendAck(frame.seq, frame.crc)
-	case common.ResultPartial, common.ResultIgnore:
-		// fragment stored or discarded; no peer response needed yet.
+		p.sendAck(frame.seq, frame.crc, frame.fragIdx)
+	case common.ResultPartial:
+		p.sendAck(frame.seq, frame.crc, frame.fragIdx)
+	case common.ResultIgnore:
+		// Malformed or out-of-range; no ack.
 	}
 }
 
-func (p *streamTransport) sendAck(seq, crc uint32) {
-	_ = p.enqueueFrame(encodeAckFrame(seq, crc), true)
+func (p *streamTransport) sendAck(seq, crc uint32, fragIdx uint16) {
+	_ = p.enqueueFrame(encodeAckFrame(seq, crc, fragIdx), true)
 }
 
-func (p *streamTransport) resolveAck(seq, crc uint32) {
-	p.acks.Resolve(seq, crc)
+func (p *streamTransport) resolveAck(seq, crc uint32, fragIdx uint16) {
+	p.acks.Mark(seq, crc, int(fragIdx))
 }
 
 func encodeDataFrame(seq, crc uint32, totalLen, fragIdx, fragTotal int, payload []byte) []byte {
@@ -481,13 +525,14 @@ func encodeDataFrame(seq, crc uint32, totalLen, fragIdx, fragTotal int, payload 
 	return out
 }
 
-func encodeAckFrame(seq, crc uint32) []byte {
-	out := make([]byte, 14)
+func encodeAckFrame(seq, crc uint32, fragIdx uint16) []byte {
+	out := make([]byte, 16)
 	binary.BigEndian.PutUint32(out[0:4], protocolMagic)
 	out[4] = protocolVersion
 	out[5] = frameTypeAck
 	binary.BigEndian.PutUint32(out[6:10], seq)
 	binary.BigEndian.PutUint32(out[10:14], crc)
+	binary.BigEndian.PutUint16(out[14:16], fragIdx)
 	return out
 }
 
@@ -520,6 +565,9 @@ func decodeTransportFrame(data []byte) (transportFrame, error) {
 		}
 		frame.seq = binary.BigEndian.Uint32(data[6:10])
 		frame.crc = binary.BigEndian.Uint32(data[10:14])
+		if len(data) >= 16 {
+			frame.fragIdx = binary.BigEndian.Uint16(data[14:16])
+		}
 		return frame, nil
 	case frameTypeData:
 		if len(data) < 22 {
@@ -536,4 +584,3 @@ func decodeTransportFrame(data []byte) (transportFrame, error) {
 		return transportFrame{}, ErrUnexpectedFrameType
 	}
 }
-

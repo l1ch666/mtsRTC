@@ -24,12 +24,21 @@ func TestDecodeTransportFrameErrorsAndAck(t *testing.T) {
 		}
 	}
 
-	ack, err := decodeTransportFrame(encodeAckFrame(7, 0x1234))
+	ack, err := decodeTransportFrame(encodeAckFrame(7, 0x1234, 5))
 	if err != nil {
 		t.Fatalf("decode ack error = %v", err)
 	}
-	if ack.typ != frameTypeAck || ack.seq != 7 || ack.crc != 0x1234 {
+	if ack.typ != frameTypeAck || ack.seq != 7 || ack.crc != 0x1234 || ack.fragIdx != 5 {
 		t.Fatalf("ack = %+v", ack)
+	}
+
+	legacyAck := []byte{0x4f, 0x56, 0x43, 0x31, protocolVersion, frameTypeAck, 0, 0, 0, 8, 0, 0, 0, 9}
+	ack, err = decodeTransportFrame(legacyAck)
+	if err != nil {
+		t.Fatalf("decode legacy ack error = %v", err)
+	}
+	if ack.seq != 8 || ack.crc != 9 || ack.fragIdx != 0 {
+		t.Fatalf("legacy ack = %+v", ack)
 	}
 }
 
