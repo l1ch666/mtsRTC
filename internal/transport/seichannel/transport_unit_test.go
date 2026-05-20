@@ -10,7 +10,6 @@ import (
 	"github.com/openlibrecommunity/olcrtc/internal/engine"
 	enginebuiltin "github.com/openlibrecommunity/olcrtc/internal/engine/builtin"
 	"github.com/openlibrecommunity/olcrtc/internal/transport"
-	"github.com/openlibrecommunity/olcrtc/internal/transport/common"
 	"github.com/pion/webrtc/v4"
 )
 
@@ -76,10 +75,10 @@ func (s *fakeEngineSession) SetEndedCallback(cb func(string))  { s.stream.SetEnd
 func (s *fakeEngineSession) WatchConnection(ctx context.Context) {
 	s.stream.WatchConnection(ctx)
 }
-func (s *fakeEngineSession) CanSend() bool                            { return s.stream.CanSend() }
-func (s *fakeEngineSession) GetSendQueue() chan []byte                { return nil }
-func (s *fakeEngineSession) GetBufferedAmount() uint64                { return 0 }
-func (s *fakeEngineSession) AddVideoTrack(t webrtc.TrackLocal) error  { return s.stream.AddTrack(t) }
+func (s *fakeEngineSession) CanSend() bool                           { return s.stream.CanSend() }
+func (s *fakeEngineSession) GetSendQueue() chan []byte               { return nil }
+func (s *fakeEngineSession) GetBufferedAmount() uint64               { return 0 }
+func (s *fakeEngineSession) AddVideoTrack(t webrtc.TrackLocal) error { return s.stream.AddTrack(t) }
 func (s *fakeEngineSession) SetVideoTrackHandler(cb func(*webrtc.TrackRemote, *webrtc.RTPReceiver)) {
 	s.stream.SetTrackHandler(cb)
 }
@@ -164,27 +163,35 @@ func TestNewErrorPaths(t *testing.T) {
 
 func TestSendAckAndClosePaths(t *testing.T) {
 	tr := &streamTransport{
-		stream:      &fakeVideoStream{canSend: true},
-		outbound:    make(chan []byte, 8),
-		outboundAck: make(chan []byte, 8),
-		closeCh:     make(chan struct{}),
-		writerDone:  make(chan struct{}),
-		acks:        common.NewAckRegistry(),
+		stream:       &fakeVideoStream{canSend: true},
+		outbound:     make(chan []byte, 8),
+		outboundAck:  make(chan []byte, 8),
+		closeCh:      make(chan struct{}),
+		writerDone:   make(chan struct{}),
+		fragAcks:     newFragAckTracker(),
+		fragmentSize: 4,
 	}
 
+	// "payload" = 7 bytes; with fragmentSize=4 it needs two fragments. Send
+	// must not finish until both fragment ACKs arrive.
 	done := make(chan error, 1)
 	payload := []byte("payload")
 	go func() { done <- tr.Send(payload) }()
 
-	select {
-	case frame := <-tr.outbound:
-		decoded, err := decodeTransportFrame(frame)
-		if err != nil {
-			t.Fatalf("decodeTransportFrame() error = %v", err)
+	wantCRC := crc32.ChecksumIEEE(payload)
+	seen := 0
+	for seen < 2 {
+		select {
+		case frame := <-tr.outbound:
+			decoded, err := decodeTransportFrame(frame)
+			if err != nil {
+				t.Fatalf("decodeTransportFrame() error = %v", err)
+			}
+			tr.resolveAck(decoded.seq, wantCRC, decoded.fragIdx)
+			seen++
+		case <-time.After(time.Second):
+			t.Fatalf("Send() did not enqueue fragment %d", seen)
 		}
-		tr.resolveAck(decoded.seq, crc32.ChecksumIEEE(payload))
-	case <-time.After(time.Second):
-		t.Fatal("Send() did not enqueue frame")
 	}
 
 	if err := <-done; err != nil {
@@ -195,5 +202,21 @@ func TestSendAckAndClosePaths(t *testing.T) {
 	}
 	if err := tr.Send([]byte("closed")); !errors.Is(err, ErrTransportClosed) {
 		t.Fatalf("Send(closed) error = %v, want %v", err, ErrTransportClosed)
+	}
+}
+
+func TestPerAttemptAckTimeoutScalesWithFragments(t *testing.T) {
+	tr := &streamTransport{
+		ackTimeout:    time.Second,
+		frameInterval: 40 * time.Millisecond,
+	}
+	if got := tr.perAttemptAckTimeout(1); got != time.Second {
+		t.Fatalf("perAttemptAckTimeout(1) = %v, want 1s", got)
+	}
+	if got, want := tr.perAttemptAckTimeout(16), 1920*time.Millisecond; got != want {
+		t.Fatalf("perAttemptAckTimeout(16) = %v, want %v", got, want)
+	}
+	if got, want := tr.perAttemptAckTimeout(10000), 30*time.Second; got != want {
+		t.Fatalf("perAttemptAckTimeout(10000) = %v, want %v", got, want)
 	}
 }

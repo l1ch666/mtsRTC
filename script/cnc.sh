@@ -294,7 +294,7 @@ VIDEO_W=1920; VIDEO_H=1080; VIDEO_FPS=30; VIDEO_BITRATE="2M"; VIDEO_HW="none"
 VIDEO_CODEC="qrcode"; VIDEO_QR_SIZE=0; VIDEO_QR_RECOVERY="low"
 VIDEO_TILE_MODULE=4; VIDEO_TILE_RS=20
 VP8_FPS=25; VP8_BATCH=1
-SEI_FPS=60; SEI_BATCH=64; SEI_FRAG=900; SEI_ACK=2000
+SEI_FPS=30; SEI_BATCH=8; SEI_FRAG=700; SEI_ACK=10000
 
 if [ "$AUTH" = "mtslink" ]; then
     VIDEO_W=640
@@ -372,17 +372,17 @@ if [ "$TRANSPORT" = "seichannel" ]; then
     echo ""
     echo "--- SEIchannel settings ---"
 
-    read -p "SEI FPS [default: 60]: " SEIFPS_INPUT
-    SEI_FPS=${SEIFPS_INPUT:-60}
+    read -p "SEI FPS [default: 30]: " SEIFPS_INPUT
+    SEI_FPS=${SEIFPS_INPUT:-30}
 
-    read -p "SEI batch size (frames per tick) [default: 64]: " SEIBATCH_INPUT
-    SEI_BATCH=${SEIBATCH_INPUT:-64}
+    read -p "SEI batch size (frames per tick) [default: 8]: " SEIBATCH_INPUT
+    SEI_BATCH=${SEIBATCH_INPUT:-8}
 
-    read -p "SEI fragment size in bytes [default: 900]: " SEIFRAG_INPUT
-    SEI_FRAG=${SEIFRAG_INPUT:-900}
+    read -p "SEI fragment size in bytes [default: 700]: " SEIFRAG_INPUT
+    SEI_FRAG=${SEIFRAG_INPUT:-700}
 
-    read -p "SEI ACK timeout in milliseconds [default: 2000]: " SEIACK_INPUT
-    SEI_ACK=${SEIACK_INPUT:-2000}
+    read -p "SEI ACK timeout in milliseconds [default: 10000]: " SEIACK_INPUT
+    SEI_ACK=${SEIACK_INPUT:-10000}
 fi
 
 echo ""

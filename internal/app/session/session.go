@@ -47,10 +47,10 @@ const (
 	defaultVideoQRRecovery = "low"
 	defaultVP8FPS          = 25
 	defaultVP8BatchSize    = 1
-	defaultSEIFPS          = 60
-	defaultSEIBatchSize    = 64
-	defaultSEIFragmentSize = 900
-	defaultSEIAckTimeoutMS = 2000
+	defaultSEIFPS          = 30
+	defaultSEIBatchSize    = 8
+	defaultSEIFragmentSize = 700
+	defaultSEIAckTimeoutMS = 10000
 )
 
 var sessionRestartDelay = 2 * time.Second //nolint:gochecknoglobals // tests shorten lifecycle rotation delay

@@ -12,9 +12,21 @@ sendonly m-line and preserves a separate incoming video receiver; ffmpeg raw
 H.264 output is also reframed into complete Annex-B access units before send.
 
 Camera visibility note: the normal VPN path sends tunnel frames through H.264
-`videochannel`; those frames may not look like a human camera in the lobby.
+`seichannel`; those frames are H.264 samples with olcRTC data in SEI payloads
+and may not look like a human camera in the lobby.
 `MTS_VIDEO_TEST=1` switches to synthetic visible H.264 frames only for
 diagnosing whether MTS Link renders the bot tile.
+
+## Minimal stability patch
+
+This branch intentionally stays on the original MTS Link fork history. It is
+not rebased onto newer upstream olcRTC. The important stability changes are
+limited to:
+
+- `seichannel` now ACKs every fragment and retransmits only missing fragments;
+- default MTS Link `seichannel` profile is conservative: `fps=30`, `batch=8`,
+  `frag=700`, `ack-ms=10000`;
+- old whole-message ACK frames are still accepted for compatibility.
 
 Этот архив — готовый fork `olcrtc` ветки `refactor/universal-carrier`, подогнанный под XLTD VPN project и MTS Link carrier.
 
@@ -53,7 +65,7 @@ https://my.mts-link.ru/j/167846474/19645959806
 В конце сервер выдаст URI вида:
 
 ```text
-olcrtc://mtslink?videochannel<video-w=640&video-h=360&video-fps=15&video-bitrate=1200k&video-hw=none&video-codec=qrcode&video-qr-recovery=low>@https%3A%2F%2Fmy.mts-link.ru%2Fj%2F167846474%2F19645959806#64hexkey$comment
+olcrtc://mtslink?seichannel<fps=30&batch=8&frag=700&ack-ms=10000>@https%3A%2F%2Fmy.mts-link.ru%2Fj%2F167846474%2F19645959806#64hexkey$comment
 ```
 
 Комнатная ссылка percent-encoded специально: это нужно, чтобы `https://...` внутри URI не ломал парсер клиента.
@@ -86,17 +98,13 @@ room:
 crypto:
   key: "64_hex_key_here"
 net:
-  transport: videochannel
+  transport: seichannel
   dns: "8.8.8.8:53"
-video:
-  codec: qrcode
-  width: 640
-  height: 360
-  fps: 15
-  bitrate: "1200k"
-  hw: none
-  qr_size: 0
-  qr_recovery: low
+sei:
+  fps: 30
+  batch_size: 8
+  fragment_size: 700
+  ack_timeout_ms: 10000
 data: data
 debug: false
 ```

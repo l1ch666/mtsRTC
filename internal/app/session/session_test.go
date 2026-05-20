@@ -29,7 +29,7 @@ func TestApplyTransportDefaults(t *testing.T) {
 			in:   Config{Transport: transportSEI},
 			want: Config{
 				Transport: transportSEI,
-				SEI:       SEIConfig{FPS: 60, BatchSize: 64, FragmentSize: 900, AckTimeoutMS: 2000},
+				SEI:       SEIConfig{FPS: 30, BatchSize: 8, FragmentSize: 700, AckTimeoutMS: 10000},
 			},
 		},
 		{
