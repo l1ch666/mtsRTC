@@ -41,6 +41,8 @@ Community ui client: [alananisimov/olcbox](https://github.com/alananisimov/olcbo
 
 [Read before ask](docs/about.md)
 
+[MTS Link fork notes](docs/mtslink.md)
+
 
 
 ## Build
