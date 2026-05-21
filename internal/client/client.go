@@ -49,6 +49,8 @@ var (
 	ErrSOCKSCredTooLong = errors.New("socks5 user/pass exceeds 255 bytes")
 )
 
+const mtsLinkSEIMaxTunnels = 3
+
 // Client handles local SOCKS5 connections and tunnels them to the server.
 type Client struct {
 	ln          transport.Transport
@@ -66,6 +68,7 @@ type Client struct {
 	dnsServer   string
 	socksUser   string
 	socksPass   string
+	tunnelLimit chan struct{}
 }
 
 // HealthFunc is called when the client control health snapshot changes.
@@ -127,13 +130,14 @@ func RunWithReady(ctx context.Context, cfg Config, onReady func()) error {
 	}
 
 	c := &Client{
-		cipher:    cipher,
-		deviceID:  deviceID,
-		claims:    cfg.Claims,
-		dnsServer: cfg.DNSServer,
-		socksUser: cfg.SOCKSUser,
-		socksPass: cfg.SOCKSPass,
-		health:    runtime.NewHealthTracker(cfg.OnHealth),
+		cipher:      cipher,
+		deviceID:    deviceID,
+		claims:      cfg.Claims,
+		dnsServer:   cfg.DNSServer,
+		socksUser:   cfg.SOCKSUser,
+		socksPass:   cfg.SOCKSPass,
+		tunnelLimit: makeTunnelLimiter(cfg),
+		health:      runtime.NewHealthTracker(cfg.OnHealth),
 	}
 
 	// shutdown is registered BEFORE bringUpLink so we always close any
@@ -324,6 +328,13 @@ func linkMaxPayload(tr transport.Transport) int {
 	return runtime.MaxPayload(tr)
 }
 
+func makeTunnelLimiter(cfg Config) chan struct{} {
+	if strings.EqualFold(cfg.Carrier, "mtslink") && strings.EqualFold(cfg.Transport, "seichannel") {
+		return make(chan struct{}, mtsLinkSEIMaxTunnels)
+	}
+	return nil
+}
+
 func (c *Client) handleReconnect(ctx context.Context, cfg Config, cancel context.CancelFunc, reason string) bool {
 	c.reconnectMu.Lock()
 	defer c.reconnectMu.Unlock()
@@ -416,7 +427,7 @@ func (c *Client) tryReopenSession(
 		logger.Warnf("smux re-init failed (attempt %d): %v", attempt, err)
 		return false
 	}
-	control, sid, err := openControlStreamTimeout(ctx, sess, c.deviceID, c.claims, 2*time.Second)
+	control, sid, err := openControlStreamTimeout(ctx, sess, c.deviceID, c.claims, handshake.DefaultTimeout)
 	if err != nil {
 		logger.Warnf("handshake on reconnect failed (attempt %d): %v", attempt, err)
 		_ = sess.Close()
@@ -573,7 +584,7 @@ func (c *Client) acceptLoop(ctx context.Context, ln net.Listener) {
 	}
 }
 
-func (c *Client) handleSocks5(_ context.Context, conn net.Conn) {
+func (c *Client) handleSocks5(ctx context.Context, conn net.Conn) {
 	defer func() { _ = conn.Close() }()
 
 	if err := c.socks5Handshake(conn); err != nil {
@@ -585,6 +596,12 @@ func (c *Client) handleSocks5(_ context.Context, conn net.Conn) {
 		return
 	}
 
+	if !c.acquireTunnel(ctx) {
+		_, _ = conn.Write(replyHostUnreachable())
+		return
+	}
+	defer c.releaseTunnel()
+
 	c.sessMu.RLock()
 	sess := c.session
 	c.sessMu.RUnlock()
@@ -594,6 +611,28 @@ func (c *Client) handleSocks5(_ context.Context, conn net.Conn) {
 	}
 
 	c.tunnel(conn, sess, targetAddr, targetPort)
+}
+
+func (c *Client) acquireTunnel(ctx context.Context) bool {
+	if c.tunnelLimit == nil {
+		return true
+	}
+	select {
+	case c.tunnelLimit <- struct{}{}:
+		return true
+	case <-ctx.Done():
+		return false
+	}
+}
+
+func (c *Client) releaseTunnel() {
+	if c.tunnelLimit == nil {
+		return
+	}
+	select {
+	case <-c.tunnelLimit:
+	default:
+	}
 }
 
 func (c *Client) tunnel(conn net.Conn, sess *smux.Session, targetAddr string, targetPort int) {

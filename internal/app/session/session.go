@@ -30,6 +30,7 @@ const (
 	modeCNC          = "cnc"
 	modeGen          = "gen"
 	authJazz         = "jazz"
+	authMTSLink      = "mtslink"
 	authNone         = "none"
 	transportVideo   = "videochannel"
 	transportVP8     = "vp8channel"
@@ -51,6 +52,9 @@ const (
 	defaultSEIBatchSize    = 8
 	defaultSEIFragmentSize = 700
 	defaultSEIAckTimeoutMS = 10000
+	defaultMTSSEIInterval  = "20s"
+	defaultMTSSEITimeout   = "60s"
+	defaultMTSSEIFailures  = 3
 )
 
 var sessionRestartDelay = 2 * time.Second //nolint:gochecknoglobals // tests shorten lifecycle rotation delay
@@ -257,6 +261,18 @@ func ApplyTransportDefaults(cfg Config) Config {
 
 // ApplyLivenessDefaults fills documented control-stream liveness defaults.
 func ApplyLivenessDefaults(cfg Config) Config {
+	if cfg.Auth == authMTSLink && cfg.Transport == transportSEI {
+		if cfg.LivenessInterval == "" {
+			cfg.LivenessInterval = defaultMTSSEIInterval
+		}
+		if cfg.LivenessTimeout == "" {
+			cfg.LivenessTimeout = defaultMTSSEITimeout
+		}
+		if cfg.LivenessFailures == 0 {
+			cfg.LivenessFailures = defaultMTSSEIFailures
+		}
+		return cfg
+	}
 	if cfg.LivenessInterval == "" {
 		cfg.LivenessInterval = control.DefaultInterval.String()
 	}

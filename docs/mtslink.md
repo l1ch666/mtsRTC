@@ -26,6 +26,14 @@ limited to:
 - `seichannel` now ACKs every fragment and retransmits only missing fragments;
 - default MTS Link `seichannel` profile is conservative: `fps=30`, `batch=8`,
   `frag=700`, `ack-ms=10000`;
+- MTS Link `seichannel` constrains each smux frame to a small SEI burst
+  (`fragment_size * 3`, capped at 7 KiB) so control ping/pong is not starved
+  by large page loads;
+- MTS Link `seichannel` liveness defaults are relaxed to `20s` interval,
+  `60s` timeout and `3` failures because media delivery can stall behind
+  browser traffic;
+- the client limits MTS Link `seichannel` to three concurrent SOCKS tunnels to
+  avoid browser preconnect storms overwhelming the media path;
 - old whole-message ACK frames are still accepted for compatibility.
 
 Этот архив — готовый fork `olcrtc` ветки `refactor/universal-carrier`, подогнанный под XLTD VPN project и MTS Link carrier.

@@ -93,6 +93,17 @@ func TestApplyLivenessDefaults(t *testing.T) {
 	if got := ApplyLivenessDefaults(explicit); got != explicit {
 		t.Fatalf("ApplyLivenessDefaults() = %+v, want %+v", got, explicit)
 	}
+
+	mtsSEI := ApplyLivenessDefaults(Config{Auth: authMTSLink, Transport: transportSEI})
+	if mtsSEI.LivenessInterval != defaultMTSSEIInterval {
+		t.Fatalf("MTS LivenessInterval = %q, want %q", mtsSEI.LivenessInterval, defaultMTSSEIInterval)
+	}
+	if mtsSEI.LivenessTimeout != defaultMTSSEITimeout {
+		t.Fatalf("MTS LivenessTimeout = %q, want %q", mtsSEI.LivenessTimeout, defaultMTSSEITimeout)
+	}
+	if mtsSEI.LivenessFailures != defaultMTSSEIFailures {
+		t.Fatalf("MTS LivenessFailures = %d, want %d", mtsSEI.LivenessFailures, defaultMTSSEIFailures)
+	}
 }
 
 func TestRunWithSessionRotationRestartsAfterMaxDuration(t *testing.T) {

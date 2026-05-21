@@ -22,20 +22,21 @@ import (
 )
 
 const (
-	defaultMaxPayloadSize        = 7 * 1024
-	defaultFragmentSize          = 900
-	defaultAckTimeout            = 3 * time.Second
-	defaultFrameInterval         = 50 * time.Millisecond
-	defaultFPS                   = 20
-	defaultBatchSize             = 1
-	defaultConnectTimeout        = 30 * time.Second
-	maxSendAttempts              = 8
-	sampleBuilderMaxLate         = 128
-	protocolMagic         uint32 = 0x4f564331 // OVC1
-	protocolVersion       byte   = 1
-	frameTypeData         byte   = 1
-	frameTypeAck          byte   = 2
-	frameTypeHello        byte   = 3
+	defaultMaxPayloadSize             = 7 * 1024
+	defaultMaxPayloadFragments        = 3
+	defaultFragmentSize               = 900
+	defaultAckTimeout                 = 3 * time.Second
+	defaultFrameInterval              = 50 * time.Millisecond
+	defaultFPS                        = 20
+	defaultBatchSize                  = 1
+	defaultConnectTimeout             = 30 * time.Second
+	maxSendAttempts                   = 8
+	sampleBuilderMaxLate              = 128
+	protocolMagic              uint32 = 0x4f564331 // OVC1
+	protocolVersion            byte   = 1
+	frameTypeData              byte   = 1
+	frameTypeAck               byte   = 2
+	frameTypeHello             byte   = 3
 )
 
 var (
@@ -311,8 +312,16 @@ func (p *streamTransport) Features() transport.Features {
 		Reliable:        true,
 		Ordered:         true,
 		MessageOriented: true,
-		MaxPayloadSize:  p.effectiveFragmentSize() * 8,
+		MaxPayloadSize:  p.effectiveMaxPayloadSize(),
 	}
+}
+
+func (p *streamTransport) effectiveMaxPayloadSize() int {
+	payloadSize := p.effectiveFragmentSize() * defaultMaxPayloadFragments
+	if payloadSize > defaultMaxPayloadSize {
+		return defaultMaxPayloadSize
+	}
+	return payloadSize
 }
 
 func (p *streamTransport) effectiveFragmentSize() int {

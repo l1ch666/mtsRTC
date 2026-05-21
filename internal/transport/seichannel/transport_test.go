@@ -88,3 +88,15 @@ func TestHelloFrameRoundTrip(t *testing.T) {
 		t.Fatalf("hello frame type = %d, want %d", hello.typ, frameTypeHello)
 	}
 }
+
+func TestFeaturesCapPayloadToSmallSEIBurst(t *testing.T) {
+	tr := &streamTransport{fragmentSize: 900}
+	if got, want := tr.Features().MaxPayloadSize, 2700; got != want {
+		t.Fatalf("MaxPayloadSize = %d, want %d", got, want)
+	}
+
+	tr.fragmentSize = 4000
+	if got := tr.Features().MaxPayloadSize; got != defaultMaxPayloadSize {
+		t.Fatalf("MaxPayloadSize = %d, want cap %d", got, defaultMaxPayloadSize)
+	}
+}
