@@ -6,19 +6,19 @@ room:
 crypto:
   key: "64_hex_key_here"
 net:
-  transport: videochannel
-  dns: "8.8.8.8:53"
+  transport: seichannel
+  dns: "1.1.1.1:53"
 socks:
   host: "127.0.0.1"
   port: 8808
-video:
-  codec: qrcode
-  width: 640
-  height: 360
-  fps: 15
-  bitrate: "1200k"
-  hw: none
-  qr_size: 0
-  qr_recovery: low
+sei:
+  fps: 30
+  batch_size: 8
+  fragment_size: 700
+  ack_timeout_ms: 10000
+liveness:
+  interval: 20s
+  timeout: 60s
+  failures: 3
 data: data
 debug: false

@@ -1,20 +1,23 @@
-# XLTD VPN integration notes
+# XLTD VPN Integration Notes
 
-Этот olcRTC fork подогнан под URI parser из XLTD VPN project.
+This olcRTC fork is the native core source for XLTD VPN MTS Link profiles.
 
-Серверный quick script печатает URI в таком формате:
+The quick server script prints XLTD-compatible URIs in this shape:
 
 ```text
-olcrtc://mtslink?videochannel<video-w=640&video-h=360&video-fps=15&video-bitrate=1200k&video-hw=none&video-codec=qrcode&video-qr-recovery=low>@ENCODED_ROOM_URL#64_HEX_KEY$COMMENT
+olcrtc://mtslink?seichannel<fps=30&batch=8&frag=700&ack-ms=10000&liveness-interval=20s&liveness-timeout=60s&liveness-failures=3>@ENCODED_ROOM_URL#64_HEX_KEY$COMMENT
 ```
 
-Важные детали совместимости:
+Compatibility rules:
 
-- `carrier = mtslink`;
-- `transport = videochannel`;
-- MTS Link room URL percent-encoded после `@`;
-- ключ остаётся 64 hex после `#`;
-- комментарий профиля идёт после `$`;
-- client-id не обязателен, XLTD parser сам ставит `default`.
+- `carrier = mtslink`.
+- Recommended VPN transport is `seichannel`.
+- `videochannel` is a legacy/diagnostic visual transport and requires ffmpeg.
+- The MTS Link room URL is percent-encoded after `@`.
+- The key remains a 64-character hex string after `#`.
+- The profile comment goes after `$`.
+- `client-id` is optional; XLTD VPN defaults it to `default`.
 
-Android-клиент из XLTD может распарсить профиль и сохранить его. Для реального runtime `videochannel` на Android нужен olcRTC mobile core с ffmpeg-backed videochannel. Windows-клиент из XLTD рассчитан на запуск `videochannel`, если рядом есть `ffmpeg.exe` и собранный `olcrtc.exe` из этого fork.
+Android and Windows XLTD VPN clients both parse this URI format. Android needs
+the combo AAR built with the native media assets for runtime media transports.
+Windows packages `ffmpeg.exe` and `olcrtc.exe` next to the GUI.

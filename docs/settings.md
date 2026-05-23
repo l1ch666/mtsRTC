@@ -16,8 +16,8 @@
 |-----------|:--------:|:----:|:--------:|:-----:|:-------:|
 | datachannel | - | ~ | ~ | + | - |
 | vp8channel | + | - | + | ~ | - |
-| seichannel | - | - | + | ~ | - |
-| videochannel | + | - | + | ~ | + |
+| seichannel | - | - | + | ~ | + |
+| videochannel | + | - | + | ~ | ~ |
 
 **Легенда:**
 - `+` - работает (pass в E2E тестах)
@@ -30,13 +30,13 @@
 
 **WBStream:** все транспорты кроме datachannel работают. DataChannel в обычном guest flow без выдавания модератора не работает — WB Stream выдаёт токены с `canPublishData=false`, и DC не маршрутизирует данные.
 
-**MTS Link:** работает как guest через видеомедиа, поэтому нормальный режим — `videochannel`. DataChannel/VP8/SEI для MTS Link carrier не используются.
+**MTS Link:** работает как guest через H.264/Opus media. Нормальный VPN-режим — `seichannel`: данные идут в H.264 SEI payload. `videochannel` оставлен для legacy/diagnostics и требует ffmpeg; `vp8channel` только для старых проб.
 
 **Jitsi:** datachannel стабильно проходит — реализован поверх colibri-ws bridge channel и шлёт байты через `EndpointMessage{raw}` broadcast. Подходит для self-hosted и публичных Jitsi Meet инстансов без аутентификации (`https://meet.cryptopro.ru/...`, `https://meet.jit.si/...` и т.п.). Видео-транспорты (vp8channel, seichannel, videochannel) экспонируют sendable VideoTrack через pion PeerConnection после Jingle session-accept, но Jicofo требует дополнительных протокольных шагов (LastN, ReceiverVideoConstraints, source-add) для маршрутизации видео — поэтому они помечены `~` (best effort).
 
 **Jitsi + seichannel — отдельная оговорка.** SEI NAL-юниты идут пассажиром в H.264 видеопотоке, а Jicofo на self-hosted инстансах (например `meet.cryptopro.ru`) периодически режет/откладывает upstream видео когда ресивера в комнате формально нет — для нас это выглядит как `seichannel ack timeout` при формально живом PeerConnection. В steady-state транспорт работает, но e2e матрица помечает его `Unstable` (флаппит): зелёного и красного результата в CI достаточно, тест suite на этом не валится. Для надёжной передачи данных через jitsi предпочтительнее `datachannel` или `vp8channel`.
 
-**Рекомендуемая комбинация для обычного olcRTC: `jitsi + datachannel`** — стабильно работает на любом self-hosted или публичном Jitsi Meet (например `meet.cryptopro.ru`). Для этого MTS Link fork используй `mtslink + videochannel`; быстрый скрипт выберет videochannel автоматически.
+**Рекомендуемая комбинация для обычного olcRTC: `jitsi + datachannel`** — стабильно работает на любом self-hosted или публичном Jitsi Meet (например `meet.cryptopro.ru`). Для этого MTS Link fork используй `mtslink + seichannel`; быстрый скрипт выберет seichannel автоматически.
 
 Скорость по убыванию: `datachannel` > `vp8channel` > `seichannel` > `videochannel`
 
@@ -191,7 +191,7 @@ gen:
 
 **Рекомендуется: `codec: qrcode`, `width: 1080`, `height: 1080`, `fps: 60`, `bitrate: "5000k"`, `hw: none`**
 
-Для MTS Link fork безопасный быстрый профиль ниже: `codec: qrcode`, `width: 640`, `height: 360`, `fps: 15`, `bitrate: "1200k"`, `hw: none`. Скрипт `./script/srv.sh` выставляет эти значения автоматически при выборе `mtslink`.
+Для MTS Link fork `videochannel` теперь считается legacy/diagnostic режимом. Нормальный VPN-профиль использует `seichannel`; включай `videochannel` только если нужно проверить видимую камеру/QR-кадр и рядом есть ffmpeg.
 
 | YAML поле | Описание | По умолчанию |
 |-----------|----------|:------------:|

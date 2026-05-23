@@ -1,65 +1,34 @@
-# olcRTC Universal Carrier + MTS Link fork
+# MTS Link Carrier
 
-Этот архив — готовый fork `olcrtc` ветки `refactor/universal-carrier`, подогнанный под XLTD VPN project и MTS Link carrier.
+This fork adds an experimental MTS Link carrier to olcRTC. It joins a public
+MTS Link room as a guest, negotiates the browser-like H.264/Opus media shape,
+and carries VPN traffic through H.264 SEI payloads.
 
-Что изменено:
-
-- добавлен `auth.provider: mtslink`;
-- добавлен `internal/engine/mtslink`;
-- MTS Link подключается к публичной встрече как гость;
-- для MTS Link используется `videochannel` через H.264 media;
-- `./script/srv.sh` и `./script/cnc.sh` получили пункт `5) mtslink`;
-- при выборе MTS Link transport принудительно становится `videochannel`;
-- быстрые скрипты теперь умеют собирать текущий распакованный архив локально, не откатываясь в upstream `master`;
-- в конце `srv.sh` печатается `olcrtc://...` URI, совместимый с XLTD VPN parser.
-
-## Быстрый запуск сервера
-
-```bash
-chmod +x script/*.sh
-./script/srv.sh --no-cache
-```
-
-Выбери carrier:
+Recommended VPN transport:
 
 ```text
-5) mtslink
+mtslink + seichannel
 ```
 
-Вставь ссылку постоянной встречи:
+`videochannel` is still available for legacy visible-video diagnostics, but it
+is not the default VPN path.
+
+## Room Link
+
+Use a public MTS Link room URL:
 
 ```text
 https://my.mts-link.ru/j/167846474/19645959806
 ```
 
-Для публичной гостевой встречи `MTS_COOKIE` оставь пустым. Для закрытой комнаты можно вставить cookie, скрипт передаст его в контейнер через env `MTS_COOKIE`.
-
-В конце сервер выдаст URI вида:
-
-```text
-olcrtc://mtslink?videochannel<video-w=640&video-h=360&video-fps=15&video-bitrate=1200k&video-hw=none&video-codec=qrcode&video-qr-recovery=low>@https%3A%2F%2Fmy.mts-link.ru%2Fj%2F167846474%2F19645959806#64hexkey$comment
-```
-
-Комнатная ссылка percent-encoded специально: это нужно, чтобы `https://...` внутри URI не ломал парсер клиента.
-
-## Быстрый запуск клиента
-
-```bash
-chmod +x script/*.sh
-./script/cnc.sh --no-cache
-```
-
-Выбери те же параметры:
+If automatic session discovery fails, open the room in a browser and copy the
+expanded URL that contains `/stream-new/<sessionId>`:
 
 ```text
-5) mtslink
+https://my.mts-link.ru/j/167846474/19645959806/stream-new/18867526566
 ```
 
-Transport будет `videochannel` автоматически. Room URL и key должны совпадать с сервером.
-
-## Прямой YAML, если нужен
-
-Быстрый режим не требует ручного YAML, но минимальный конфиг выглядит так:
+## Server YAML
 
 ```yaml
 mode: srv
@@ -67,70 +36,85 @@ auth:
   provider: mtslink
 room:
   id: "https://my.mts-link.ru/j/167846474/19645959806"
+  channel: default
 crypto:
   key: "64_hex_key_here"
 net:
-  transport: videochannel
-  dns: "8.8.8.8:53"
-video:
-  codec: qrcode
-  width: 640
-  height: 360
-  fps: 15
-  bitrate: "1200k"
-  hw: none
-  qr_size: 0
-  qr_recovery: low
-data: data
+  transport: seichannel
+  dns: "1.1.1.1:53"
+sei:
+  fps: 30
+  batch_size: 8
+  fragment_size: 700
+  ack_timeout_ms: 10000
+liveness:
+  interval: 20s
+  timeout: 60s
+  failures: 3
+ffmpeg: "ffmpeg"
 debug: false
 ```
 
-## 2026-05-19 core update
-
-This fork is aligned with the XLTD VPN `1.9.1` / Windows `0.5.1-beta`
-MTS Link core:
-
-- guest flow opens prejoin pages, performs `guestlogin`, fetches `/api/login`,
-  creates connection/conference records, and only then requests SFU join tokens;
-- connection or guestlogin tokens are no longer treated as SFU join tokens;
-- conference `privateKey` is used as the SFU publish token when present;
-- the peer is updated after initial SFU join so local H.264 video can be attached
-  in the same shape as the tested bot flow;
-- a silent Opus RTP sender is enabled by default to keep the participant closer
-  to a real browser with an audio publisher;
-- visible H.264 diagnostic frames are available through `MTS_VIDEO_TEST=1`.
-- outgoing H.264 QR/videochannel media is now attached as a separate sendonly
-  transceiver so the original video receiver remains available for peer tunnel
-  frames;
-- raw ffmpeg H.264 output is split into complete Annex-B access units before
-  it is written to WebRTC, avoiding random pipe-buffer chunks as samples.
-
-Recommended XLTD URI parameters:
-
-```text
-mts-peer-update=1&mts-silent-audio=1&mts-force-video=1
-```
-
-Diagnostics:
-
-- `MTS_DEBUG=1` prints bootstrap request misses.
-- `MTS_VIDEO_TEST=1` publishes synthetic visible H.264 camera frames instead of
-  the VPN video track. Use this only to check whether the MTS lobby renders the
-  bot camera.
-- `MTS_VIDEO_CODEC=h264` is the default diagnostic camera codec; `vp8` is kept
-  only as a legacy probe.
-- `MTS_FORCE_VIDEO=0`, `MTS_PEER_UPDATE=0`, or `MTS_SILENT_AUDIO=0` disable the
-  corresponding compatibility path.
-
-## GitHub fork usage
-
-Если зальёшь этот архив в свой fork, можно запускать удалённую ветку так:
+Run:
 
 ```bash
-./script/srv.sh \
-  --repo-url=https://github.com/YOUR_LOGIN/olcrtc.git \
-  --branch=mtslink-universal-carrier \
-  --no-cache
+./olcrtc server-mtslink.yaml
 ```
 
-Если запускаешь из распакованного архива, `--repo-url` не нужен: скрипт берёт локальный исходник.
+## Client URI
+
+Conservative default:
+
+```text
+olcrtc://mtslink?seichannel<fps=30&batch=8&frag=700&ack-ms=10000&liveness-interval=20s&liveness-timeout=60s&liveness-failures=3&mts-peer-update=1&mts-silent-audio=1&mts-force-video=1>@https%3A%2F%2Fmy.mts-link.ru%2Fj%2F167846474%2F19645959806#64_hex_key_here$MTS%20Link
+```
+
+Wider lab profile:
+
+```text
+olcrtc://mtslink?seichannel<fps=60&batch=64&frag=900&ack-ms=2000&liveness-interval=20s&liveness-timeout=60s&liveness-failures=3&mts-peer-update=1&mts-silent-audio=1&mts-force-video=1>@https%3A%2F%2Fmy.mts-link.ru%2Fj%2F167846474%2F19645959806#64_hex_key_here$MTS%20Link
+```
+
+The MTS Link room URL is percent-encoded after `@` so `https://...` does not
+break the `olcrtc://` parser.
+
+## Stability Defaults
+
+The current fork is intentionally conservative for MTS Link:
+
+- `seichannel` ACKs individual fragments and retransmits only missing
+  fragments.
+- MTS Link `seichannel` liveness defaults are `20s` interval, `60s` timeout,
+  and `3` failures.
+- One smux frame is capped to a small SEI burst: `fragment_size * 3`, capped at
+  7 KiB.
+- The client limits MTS Link `seichannel` to three concurrent SOCKS tunnels to
+  reduce browser preconnect storms.
+- Do not set `traffic-max-payload` or `traffic-min-delay` unless debugging a
+  specific room. The transport now sizes smux frames from the SEI fragment
+  limit and accounts for smux plus crypto overhead.
+
+## Diagnostics
+
+- `MTS_DEBUG=1` prints bootstrap request misses.
+- `MTS_VIDEO_TEST=1` publishes a synthetic visible H.264 camera. Use it only to
+  check whether the MTS lobby renders the bot tile.
+- `MTS_VIDEO_CODEC=h264` is the normal diagnostic camera codec.
+- `MTS_FORCE_VIDEO=0`, `MTS_PEER_UPDATE=0`, or `MTS_SILENT_AUDIO=0` disable
+  their compatibility paths.
+
+Camera visibility note: the normal VPN path sends SEI carrier frames, not a
+human-looking camera image. A static or synthetic visible tile is only a
+diagnostic signal; the useful payload is in H.264 SEI.
+
+## XLTD VPN Integration
+
+XLTD VPN builds this core from `l1ch666/mtsRTC` branch
+`mtslink-universal-carrier`. Keep URI and option names aligned with the Android
+and Windows clients:
+
+- product/client name: `XLTD VPN`;
+- olcRTC carrier name: `mtslink`;
+- recommended transport: `seichannel`;
+- diagnostic visual transport: `videochannel`;
+- release branch for Xray alpha clients: `alpha/xray-0.0.1`.

@@ -109,7 +109,7 @@ Enter choice [1-5, default: 1]:
 
 Выбери сервис. Полную матрицу совместимости смотри в [settings.md](settings.md).
 
-**По умолчанию `jitsi`** — стабильно работает на datachannel против self-hosted и публичных Jitsi инстансов (например `meet.cryptopro.ru`). Для MTS Link выбери `5) mtslink`: скрипт сам зафиксирует `videochannel` и безопасные низкие видео-настройки.
+**По умолчанию `jitsi`** — стабильно работает на datachannel против self-hosted и публичных Jitsi инстансов (например `meet.cryptopro.ru`). Для MTS Link выбери `5) mtslink`: скрипт предложит MTS Link режимы и по умолчанию выберет `seichannel`.
 
 ### Transport (как именно передавать данные)
 
@@ -125,10 +125,10 @@ Enter choice [1-4, default: 1]:
 Рекомендации:
 - **datachannel** - самый быстрый, минимальный пинг. Стабильно работает с `jitsi` через colibri-ws bridge channel. С `jazz` тоже работает, но Jazz банит IP за паттерны трафика. **WBStream DC не работает** в обычном guest flow (токены без `canPublishData`). **Telemost удалил DC**.
 - **vp8channel** - работает с telemost и wbstream, быстрый, но большой пинг.
-- **seichannel** - работает только с wbstream, медленный, но мелкий пинг.
-- **videochannel** - работает с wbstream (стабильно), telemost (best effort) и MTS Link. Для `mtslink` это обязательный transport, потому что carrier передаёт данные через видеомедиа.
+- **seichannel** - работает с wbstream и является рекомендуемым VPN transport для MTS Link, потому что переносит данные в H.264 SEI payload.
+- **videochannel** - работает с wbstream (стабильно), telemost (best effort) и MTS Link diagnostic/legacy режимом. Для MTS Link требует ffmpeg и не является основным VPN-путём.
 
-**Рекомендуемая комбинация для обычного olcRTC: `jitsi + datachannel`**. Для этого fork под MTS Link используй `mtslink + videochannel`; transport скрипт выберет сам.
+**Рекомендуемая комбинация для обычного olcRTC: `jitsi + datachannel`**. Для этого fork под MTS Link используй `mtslink + seichannel`; transport скрипт выберет сам.
 
 ### Room ID
 
@@ -160,7 +160,21 @@ Use SOCKS5 proxy for egress? (y/N):
 
 Если нет - просто Enter, если надо то введи `y`. Нужно чтобы сервер сам ходил через прокси.
 
-### Параметры транспорта (только для videochannel)
+### Параметры транспорта
+
+Для **mtslink + seichannel** безопасный профиль по умолчанию:
+
+```text
+SEI FPS: 30
+SEI batch: 8
+SEI fragment size: 700
+SEI ACK timeout: 10000
+```
+
+Широкий лабораторный профиль: `fps=60`, `batch=64`, `frag=900`,
+`ack-ms=2000`. Используй одинаковые значения на сервере и клиенте.
+
+#### videochannel
 
 ```
 Video codec:
@@ -223,13 +237,15 @@ VP8 batch size (frames per tick) [default: 1]: 64
 ### Параметры транспорта (только для seichannel)
 
 ```
-SEI FPS [default: 20]: 60
-SEI batch size (frames per tick) [default: 1]: 64
-SEI fragment size in bytes [default: 900]: 900
-SEI ACK timeout in milliseconds [default: 3000]: 2000
+SEI FPS [default: 30]:
+SEI batch size (frames per tick) [default: 8]:
+SEI fragment size in bytes [default: 700]:
+SEI ACK timeout in milliseconds [default: 10000]:
 ```
 
-Нажми Enter для всех - значения по умолчанию оптимальны.
+Для MTS Link начни с Enter для всех. Для лабораторного широкого профиля можно
+ввести `60`, `64`, `900`, `2000`, но значения должны совпадать на сервере и
+клиенте.
 
 
 
@@ -265,7 +281,7 @@ cd olcrtc
 ./script/cnc.sh
 ```
 
-Отвечай на те же вопросы что на сервере - **auth, transport и room ID должны совпадать**. Для MTS Link выбери `5) mtslink`, transport снова будет принудительно `videochannel`.
+Отвечай на те же вопросы что на сервере - **auth, transport и room ID должны совпадать**. Для MTS Link выбери `5) mtslink`; по умолчанию будет выбран `seichannel`.
 
 Когда спросит ключ:
 
