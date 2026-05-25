@@ -13,6 +13,9 @@ type Options struct {
 	BatchSize    int
 	FragmentSize int
 	AckTimeoutMS int
+	// LaneID enables the v2 seichannel frame header used by multipath MTS
+	// Link pools. Zero keeps the legacy single-lane wire format.
+	LaneID uint16
 }
 
 // TransportOptions marks Options as belonging to the transport options family.

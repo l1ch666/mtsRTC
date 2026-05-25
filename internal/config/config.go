@@ -46,6 +46,7 @@ type File struct {
 	Liveness  Liveness  `yaml:"liveness"`
 	Lifecycle Lifecycle `yaml:"lifecycle"`
 	Traffic   Traffic   `yaml:"traffic"`
+	Multipath Multipath `yaml:"multipath"`
 	Gen       Gen       `yaml:"gen"`
 	Profiles  []Profile `yaml:"profiles"`
 	Failover  Failover  `yaml:"failover"`
@@ -69,6 +70,7 @@ type Profile struct {
 	Liveness  Liveness  `yaml:"liveness"`
 	Lifecycle Lifecycle `yaml:"lifecycle"`
 	Traffic   Traffic   `yaml:"traffic"`
+	Multipath Multipath `yaml:"multipath"`
 }
 
 // Failover controls ordered profile failover.
@@ -162,6 +164,15 @@ type Traffic struct {
 	MaxPayloadSize int    `yaml:"max_payload_size"`
 	MinDelay       string `yaml:"min_delay"`
 	MaxDelay       string `yaml:"max_delay"`
+}
+
+// Multipath controls stream striping across multiple independent visual lanes.
+type Multipath struct {
+	Lanes              int `yaml:"lanes"`
+	ControlLanes       int `yaml:"control_lanes"`
+	ConnectParallelism int `yaml:"connect_parallelism"`
+	MinReady           int `yaml:"min_ready"`
+	MaxStreamsPerLane  int `yaml:"max_streams_per_lane"`
 }
 
 // Gen controls room-generation mode.
@@ -285,6 +296,11 @@ func Apply(dst session.Config, f File) session.Config {
 	dst.TrafficMaxPayloadSize = pickInt(dst.TrafficMaxPayloadSize, f.Traffic.MaxPayloadSize)
 	dst.TrafficMinDelay = pickString(dst.TrafficMinDelay, f.Traffic.MinDelay)
 	dst.TrafficMaxDelay = pickString(dst.TrafficMaxDelay, f.Traffic.MaxDelay)
+	dst.Multipath.Lanes = pickInt(dst.Multipath.Lanes, f.Multipath.Lanes)
+	dst.Multipath.ControlLanes = pickInt(dst.Multipath.ControlLanes, f.Multipath.ControlLanes)
+	dst.Multipath.ConnectParallelism = pickInt(dst.Multipath.ConnectParallelism, f.Multipath.ConnectParallelism)
+	dst.Multipath.MinReady = pickInt(dst.Multipath.MinReady, f.Multipath.MinReady)
+	dst.Multipath.MaxStreamsPerLane = pickInt(dst.Multipath.MaxStreamsPerLane, f.Multipath.MaxStreamsPerLane)
 	dst.Amount = pickInt(dst.Amount, f.Gen.Amount)
 	return dst
 }
@@ -330,6 +346,11 @@ func ApplyProfile(base session.Config, p Profile) session.Config {
 	dst.TrafficMaxPayloadSize = overlayInt(dst.TrafficMaxPayloadSize, p.Traffic.MaxPayloadSize)
 	dst.TrafficMinDelay = overlayString(dst.TrafficMinDelay, p.Traffic.MinDelay)
 	dst.TrafficMaxDelay = overlayString(dst.TrafficMaxDelay, p.Traffic.MaxDelay)
+	dst.Multipath.Lanes = overlayInt(dst.Multipath.Lanes, p.Multipath.Lanes)
+	dst.Multipath.ControlLanes = overlayInt(dst.Multipath.ControlLanes, p.Multipath.ControlLanes)
+	dst.Multipath.ConnectParallelism = overlayInt(dst.Multipath.ConnectParallelism, p.Multipath.ConnectParallelism)
+	dst.Multipath.MinReady = overlayInt(dst.Multipath.MinReady, p.Multipath.MinReady)
+	dst.Multipath.MaxStreamsPerLane = overlayInt(dst.Multipath.MaxStreamsPerLane, p.Multipath.MaxStreamsPerLane)
 	return dst
 }
 

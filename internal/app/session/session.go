@@ -17,6 +17,7 @@ import (
 	enginebuiltin "github.com/openlibrecommunity/olcrtc/internal/engine/builtin"
 	"github.com/openlibrecommunity/olcrtc/internal/logger"
 	"github.com/openlibrecommunity/olcrtc/internal/names"
+	"github.com/openlibrecommunity/olcrtc/internal/runtime"
 	"github.com/openlibrecommunity/olcrtc/internal/server"
 	"github.com/openlibrecommunity/olcrtc/internal/transport"
 	"github.com/openlibrecommunity/olcrtc/internal/transport/datachannel"
@@ -204,6 +205,7 @@ type Config struct {
 	TrafficMaxPayloadSize int
 	TrafficMinDelay       string
 	TrafficMaxDelay       string
+	Multipath             runtime.MultipathConfig
 	Amount                int
 }
 
@@ -616,6 +618,7 @@ func isLoopbackListenHost(host string) bool {
 func Run(ctx context.Context, cfg Config) error {
 	cfg = ApplyTransportDefaults(cfg)
 	cfg = ApplyLivenessDefaults(cfg)
+	cfg.Multipath = cfg.Multipath.WithDefaults()
 	configureDefaultResolver(cfg.DNSServer)
 	roomURL := cfg.RoomID
 	liveness, err := livenessConfig(cfg)
@@ -678,6 +681,7 @@ func runOnce(
 			Token:            cfg.Token,
 			Liveness:         liveness,
 			Traffic:          traffic,
+			Multipath:        cfg.Multipath,
 			OnSessionOpen: func(sessionID, deviceID string, claims map[string]any) {
 				logger.Infof("session opened: id=%s device=%s claims=%v", sessionID, deviceID, claims)
 			},
@@ -708,6 +712,7 @@ func runOnce(
 			Token:            cfg.Token,
 			Liveness:         liveness,
 			Traffic:          traffic,
+			Multipath:        cfg.Multipath,
 		}); err != nil {
 			return fmt.Errorf("client: %w", err)
 		}

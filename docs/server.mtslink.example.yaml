@@ -15,7 +15,17 @@ sei:
   ack_timeout_ms: 10000
 liveness:
   interval: 20s
-  timeout: 60s
-  failures: 3
+  timeout: 15s
+  failures: 6
+traffic:
+  max_payload_size: 5600
+  min_delay: 4ms
+  max_delay: 18ms
+multipath:
+  lanes: 12
+  control_lanes: 1
+  connect_parallelism: 2
+  min_ready: 4
+  max_streams_per_lane: 3
 data: data
 debug: false

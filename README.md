@@ -23,8 +23,8 @@ this fork is the active XLTD VPN core.
   connection/conference creation, SFU token extraction, peer update, pinning,
   and silent Opus RTP.
 - H.264 media shape expected by MTS Link rooms.
-- Recommended `mtslink + seichannel` VPN mode, carrying olcRTC data inside
-  H.264 SEI payloads.
+- Recommended `mtslink + seichannel + multipath` VPN mode, carrying olcRTC
+  data inside H.264 SEI payloads across several independent guest-bot lanes.
 - `videochannel` legacy/diagnostic mode for visible QR/video experiments.
 - Quick server/client scripts with a `5) mtslink` menu entry.
 - XLTD VPN compatible `olcrtc://...` URI output.
@@ -42,7 +42,7 @@ URI into XLTD VPN.
 Recommended client/server transport:
 
 ```text
-mtslink + seichannel
+mtslink + seichannel + multipath
 ```
 
 Recommended SEI profile:
@@ -53,13 +53,18 @@ batch=8
 frag=700
 ack-ms=10000
 liveness-interval=20s
-liveness-timeout=60s
-liveness-failures=3
+liveness-timeout=15s
+liveness-failures=6
+mc-lanes=12
+mc-control-lanes=1
+mc-connect-parallel=2
+mc-min-ready=4
+mc-max-streams-per-lane=3
 ```
 
-For wider lab profiles, both sides may use `fps=60&batch=64&frag=900&ack-ms=2000`.
-The current core still caps each smux frame to a small SEI burst so control
-ping/pong is not starved by large page loads.
+For wider lab profiles, both sides may use
+`fps=60&batch=64&frag=900&ack-ms=2000&mc-lanes=16&mc-min-ready=8`.
+Leave `multipath.lanes` unset only for legacy single-lane compatibility.
 
 Full setup and diagnostics: [MTSLINK.md](MTSLINK.md).
 

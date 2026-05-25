@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/openlibrecommunity/olcrtc/internal/app/session"
+	"github.com/openlibrecommunity/olcrtc/internal/runtime"
 )
 
 const (
@@ -49,6 +50,12 @@ traffic:
   max_payload_size: 4096
   min_delay: 5ms
   max_delay: 30ms
+multipath:
+  lanes: 12
+  control_lanes: 1
+  connect_parallelism: 3
+  min_ready: 6
+  max_streams_per_lane: 2
 gen:
   amount: 3
 debug: true
@@ -104,7 +111,14 @@ func requireAppliedConfig(t *testing.T, got session.Config) {
 		TrafficMaxPayloadSize: 4096,
 		TrafficMinDelay:       "5ms",
 		TrafficMaxDelay:       "30ms",
-		Amount:                3,
+		Multipath: runtime.MultipathConfig{
+			Lanes:              12,
+			ControlLanes:       1,
+			ConnectParallelism: 3,
+			MinReady:           6,
+			MaxStreamsPerLane:  2,
+		},
+		Amount: 3,
 	}
 	if got != want {
 		t.Fatalf("Apply produced wrong config: %+v, want %+v", got, want)

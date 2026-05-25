@@ -220,3 +220,39 @@ func TestPerAttemptAckTimeoutScalesWithFragments(t *testing.T) {
 		t.Fatalf("perAttemptAckTimeout(10000) = %v, want %v", got, want)
 	}
 }
+
+func TestLaneFramesDecodeAndFilter(t *testing.T) {
+	data := encodeLaneDataFrame(7, 11, 22, 5, 0, 1, []byte("hello"))
+	frame, err := decodeTransportFrame(data)
+	if err != nil {
+		t.Fatalf("decodeTransportFrame(data) error = %v", err)
+	}
+	if frame.laneID != 7 || frame.typ != frameTypeData || string(frame.payload) != "hello" {
+		t.Fatalf("lane data frame = %+v payload=%q", frame, frame.payload)
+	}
+
+	ack, err := decodeTransportFrame(encodeLaneAckFrame(7, 11, 22, 0))
+	if err != nil {
+		t.Fatalf("decodeTransportFrame(ack) error = %v", err)
+	}
+	if ack.laneID != 7 || ack.typ != frameTypeAck || ack.seq != 11 || ack.fragIdx != 0 {
+		t.Fatalf("lane ack frame = %+v", ack)
+	}
+
+	hello, err := decodeTransportFrame(encodeLaneHelloFrame(7))
+	if err != nil {
+		t.Fatalf("decodeTransportFrame(hello) error = %v", err)
+	}
+	if hello.laneID != 7 || hello.typ != frameTypeHello {
+		t.Fatalf("lane hello frame = %+v", hello)
+	}
+
+	lane7 := &streamTransport{laneID: 7}
+	lane8 := &streamTransport{laneID: 8}
+	if !lane7.acceptFrame(frame) {
+		t.Fatal("lane 7 rejected its own frame")
+	}
+	if lane8.acceptFrame(frame) {
+		t.Fatal("lane 8 accepted lane 7 frame")
+	}
+}

@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -62,6 +63,7 @@ type Client struct {
 	sessMu      sync.RWMutex
 	reconnectMu sync.Mutex
 	health      *runtime.HealthTracker
+	lanePool    *clientLanePool
 	deviceID    string
 	sessionID   string
 	claims      map[string]any
@@ -91,6 +93,7 @@ type Config struct {
 	Token            string
 	Liveness         control.Config
 	Traffic          transport.TrafficConfig
+	Multipath        runtime.MultipathConfig
 
 	// DeviceID overrides the persistent client-side device identifier. Leave
 	// empty to derive one from DeviceIDPath (or generate a random one if both
@@ -107,6 +110,25 @@ type Config struct {
 
 	// OnHealth receives liveness/reconnect status updates. Nil means no-op.
 	OnHealth HealthFunc
+}
+
+type clientLane struct {
+	id          int
+	protocolID  uint16
+	ln          transport.Transport
+	conn        *muxconn.Conn
+	session     *smux.Session
+	controlStrm *smux.Stream
+	controlStop context.CancelFunc
+	sessionID   string
+	active      atomic.Int32
+	ready       atomic.Bool
+	mu          sync.RWMutex
+}
+
+type clientLanePool struct {
+	cfg   runtime.MultipathConfig
+	lanes []*clientLane
 }
 
 // Run starts the client with the given configuration.
@@ -178,6 +200,10 @@ func (c *Client) bringUpLink(
 	cfg Config,
 	cancel context.CancelFunc,
 ) error {
+	if clientMultipathEnabled(cfg) {
+		return c.bringUpMultipath(ctx, cfg, cancel)
+	}
+
 	ln, err := transport.New(ctx, cfg.Transport, transport.Config{
 		Carrier:   cfg.Carrier,
 		RoomURL:   cfg.RoomURL,
@@ -329,6 +355,9 @@ func linkMaxPayload(tr transport.Transport) int {
 }
 
 func makeTunnelLimiter(cfg Config) chan struct{} {
+	if clientMultipathEnabled(cfg) {
+		return nil
+	}
 	if strings.EqualFold(cfg.Carrier, "mtslink") && strings.EqualFold(cfg.Transport, "seichannel") {
 		return make(chan struct{}, mtsLinkSEIMaxTunnels)
 	}
@@ -510,6 +539,11 @@ func (c *Client) recordUnhealthy(missed int)     { c.health.RecordUnhealthy(miss
 func (c *Client) recordReconnect()               { c.health.RecordReconnect() }
 
 func (c *Client) shutdown() {
+	if c.lanePool != nil {
+		c.shutdownMultipath()
+		return
+	}
+
 	c.sessMu.Lock()
 	control := c.controlStrm
 	controlStop := c.controlStop
@@ -568,6 +602,15 @@ func (c *Client) onData(data []byte) {
 	}
 }
 
+func (l *clientLane) onData(data []byte) {
+	l.mu.RLock()
+	conn := l.conn
+	l.mu.RUnlock()
+	if conn != nil {
+		conn.Push(data)
+	}
+}
+
 func (c *Client) acceptLoop(ctx context.Context, ln net.Listener) {
 	for {
 		conn, err := ln.Accept()
@@ -593,6 +636,11 @@ func (c *Client) handleSocks5(ctx context.Context, conn net.Conn) {
 
 	targetAddr, targetPort, err := c.socks5Request(conn)
 	if err != nil {
+		return
+	}
+
+	if c.lanePool != nil {
+		c.handleSocks5Multipath(ctx, conn, targetAddr, targetPort)
 		return
 	}
 

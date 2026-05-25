@@ -63,6 +63,11 @@ Payload не используется.
 | `batch` | `sei.batch_size` | Кадров за тик |
 | `frag` | `sei.fragment_size` | Размер фрагмента в байтах |
 | `ack-ms` | `sei.ack_timeout_ms` | Таймаут ACK в миллисекундах |
+| `mc-lanes` | `multipath.lanes` | MTS Link only: number of independent SEI lanes, e.g. `12` |
+| `mc-control-lanes` | `multipath.control_lanes` | MTS Link only: lanes reserved from SOCKS traffic |
+| `mc-connect-parallel` | `multipath.connect_parallelism` | MTS Link only: parallel room joins during startup |
+| `mc-min-ready` | `multipath.min_ready` | MTS Link only: minimum ready lanes before SOCKS starts |
+| `mc-max-streams-per-lane` | `multipath.max_streams_per_lane` | MTS Link only: soft SOCKS stream cap per data lane |
 
 ### videochannel
 

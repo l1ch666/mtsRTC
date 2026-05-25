@@ -79,6 +79,7 @@ type Server struct {
 	socksProxyPort int
 	liveness       control.Config
 	health         *runtime.HealthTracker
+	lanePool       *serverLanePool
 	done           chan struct{}
 	doneOnce       sync.Once
 }
@@ -116,6 +117,7 @@ type Config struct {
 	Token            string
 	Liveness         control.Config
 	Traffic          transport.TrafficConfig
+	Multipath        runtime.MultipathConfig
 
 	// AuthHook is invoked after CLIENT_HELLO to authorize the client and
 	// return a session ID. If nil, every client is admitted with a random UUID.
@@ -230,6 +232,10 @@ func (s *Server) bringUpLink(
 	cfg Config,
 	cancel context.CancelFunc,
 ) error {
+	if serverMultipathEnabled(cfg) {
+		return s.bringUpMultipath(ctx, cfg, cancel)
+	}
+
 	ln, err := transport.New(ctx, cfg.Transport, transport.Config{
 		Carrier:    cfg.Carrier,
 		RoomURL:    cfg.RoomURL,
@@ -359,6 +365,11 @@ func (s *Server) reinstallSession(dead *smux.Session) {
 }
 
 func (s *Server) closeSession() {
+	if s.lanePool != nil {
+		s.closeMultipathSessions("closed")
+		return
+	}
+
 	s.sessMu.Lock()
 	sess := s.session
 	conn := s.conn
@@ -484,6 +495,10 @@ func (s *Server) getPeerSession(peerID string) *peerSession {
 // smux session is the control stream — the handshake runs there. Subsequent
 // streams are tunnel streams and proxy traffic.
 func (s *Server) serve(ctx context.Context) {
+	if s.lanePool != nil {
+		<-ctx.Done()
+		return
+	}
 	if s.peerLn != nil {
 		<-ctx.Done()
 		return

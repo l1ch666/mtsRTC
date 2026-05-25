@@ -18,7 +18,9 @@ import (
 	"github.com/openlibrecommunity/olcrtc/internal/control"
 	"github.com/openlibrecommunity/olcrtc/internal/logger"
 	"github.com/openlibrecommunity/olcrtc/internal/protect"
-
+	"github.com/openlibrecommunity/olcrtc/internal/runtime"
+	"github.com/openlibrecommunity/olcrtc/internal/transport"
+	"github.com/openlibrecommunity/olcrtc/internal/transport/seichannel"
 	"github.com/openlibrecommunity/olcrtc/internal/transport/vp8channel"
 
 	_ "golang.org/x/mobile/bind"                       // ensure gomobile bind is available
@@ -52,6 +54,7 @@ var (
 const (
 	defaultTransport   = "vp8channel"
 	dataTransport      = "datachannel"
+	seiTransport       = "seichannel"
 	defaultDNSServer   = "1.1.1.1:53"
 	defaultHTTPPingURL = "https://www.google.com/generate_204"
 	carrierWBStream    = "wbstream"
@@ -79,13 +82,21 @@ var (
 )
 
 type mobileConfig struct {
-	transport        string
-	dnsServer        string
-	vp8FPS           int
-	vp8BatchSize     int
-	livenessInterval time.Duration
-	livenessTimeout  time.Duration
-	livenessFailures int
+	transport         string
+	dnsServer         string
+	vp8FPS            int
+	vp8BatchSize      int
+	seiFPS            int
+	seiBatchSize      int
+	seiFragmentSize   int
+	seiAckTimeoutMS   int
+	livenessInterval  time.Duration
+	livenessTimeout   time.Duration
+	livenessFailures  int
+	trafficMaxPayload int
+	trafficMinDelay   time.Duration
+	trafficMaxDelay   time.Duration
+	multipath         runtime.MultipathConfig
 }
 
 // SetProtector sets the Android VPN socket protector.
@@ -138,6 +149,17 @@ func SetVP8Options(fps, batchSize int) {
 	defaults.vp8BatchSize = clampAtLeastOne(batchSize, 64)
 }
 
+// SetSEIOptions configures seichannel.
+func SetSEIOptions(fps, batchSize, fragmentSize, ackTimeoutMS int) {
+	mu.Lock()
+	defer mu.Unlock()
+	ensureDefaultConfigLocked()
+	defaults.seiFPS = clampAtLeastOne(fps, 120)
+	defaults.seiBatchSize = clampAtLeastOne(batchSize, 256)
+	defaults.seiFragmentSize = clampAtLeastOne(fragmentSize, 4096)
+	defaults.seiAckTimeoutMS = clampAtLeastOne(ackTimeoutMS, 60000)
+}
+
 // SetLivenessOptions configures control-stream ping/pong checks.
 // Values <= 0 reset that field to its default. Durations are milliseconds.
 func SetLivenessOptions(intervalMillis, timeoutMillis, failures int) {
@@ -151,6 +173,30 @@ func SetLivenessOptions(intervalMillis, timeoutMillis, failures int) {
 		return
 	}
 	defaults.livenessFailures = failures
+}
+
+// SetTrafficOptions configures optional payload shaping. Durations are milliseconds.
+func SetTrafficOptions(maxPayload, minDelayMS, maxDelayMS int) {
+	mu.Lock()
+	defer mu.Unlock()
+	ensureDefaultConfigLocked()
+	defaults.trafficMaxPayload = maxPayload
+	defaults.trafficMinDelay = durationFromMillisOrZero(minDelayMS)
+	defaults.trafficMaxDelay = durationFromMillisOrZero(maxDelayMS)
+}
+
+// SetMultipathOptions enables stream striping across multiple seichannel lanes.
+func SetMultipathOptions(lanes, controlLanes, connectParallelism, minReady, maxStreamsPerLane int) {
+	mu.Lock()
+	defer mu.Unlock()
+	ensureDefaultConfigLocked()
+	defaults.multipath = runtime.MultipathConfig{
+		Lanes:              lanes,
+		ControlLanes:       controlLanes,
+		ConnectParallelism: connectParallelism,
+		MinReady:           minReady,
+		MaxStreamsPerLane:  maxStreamsPerLane,
+	}.WithDefaults()
 }
 
 // SetDebug enables or disables verbose logging.
@@ -569,20 +615,19 @@ func startWithConfig(
 		err := runClientWithReady(
 			ctx,
 			client.Config{
-				Transport: cfg.transport,
-				Carrier:   carrierName,
-				RoomURL:   roomURL,
-				KeyHex:    keyHex,
-				DeviceID:  clientID,
-				LocalAddr: fmt.Sprintf("127.0.0.1:%d", socksPort),
-				DNSServer: cfg.dnsServer,
-				SOCKSUser: socksUser,
-				SOCKSPass: socksPass,
-				TransportOptions: vp8channel.Options{
-					FPS:       cfg.vp8FPS,
-					BatchSize: cfg.vp8BatchSize,
-				},
-				Liveness: livenessConfig(cfg),
+				Transport:        cfg.transport,
+				Carrier:          carrierName,
+				RoomURL:          roomURL,
+				KeyHex:           keyHex,
+				DeviceID:         clientID,
+				LocalAddr:        fmt.Sprintf("127.0.0.1:%d", socksPort),
+				DNSServer:        cfg.dnsServer,
+				SOCKSUser:        socksUser,
+				SOCKSPass:        socksPass,
+				TransportOptions: transportOptionsFor(cfg),
+				Liveness:         livenessConfig(cfg),
+				Traffic:          trafficConfig(cfg),
+				Multipath:        cfg.multipath,
 			},
 			func() {
 				readyOnce.Do(func() {
@@ -697,6 +742,10 @@ func ensureDefaultConfigLocked() {
 			dnsServer:        defaultDNSServer,
 			vp8FPS:           60,
 			vp8BatchSize:     8,
+			seiFPS:           30,
+			seiBatchSize:     8,
+			seiFragmentSize:  700,
+			seiAckTimeoutMS:  10000,
 			livenessInterval: control.DefaultInterval,
 			livenessTimeout:  control.DefaultTimeout,
 			livenessFailures: control.DefaultFailures,
@@ -724,10 +773,39 @@ func livenessConfig(cfg mobileConfig) control.Config {
 	}
 }
 
+func transportOptionsFor(cfg mobileConfig) transport.Options {
+	switch normalizeTransport(cfg.transport) {
+	case seiTransport:
+		return seichannel.Options{
+			FPS:          cfg.seiFPS,
+			BatchSize:    cfg.seiBatchSize,
+			FragmentSize: cfg.seiFragmentSize,
+			AckTimeoutMS: cfg.seiAckTimeoutMS,
+		}
+	case dataTransport, defaultTransport:
+		return vp8channel.Options{
+			FPS:       cfg.vp8FPS,
+			BatchSize: cfg.vp8BatchSize,
+		}
+	default:
+		return nil
+	}
+}
+
+func trafficConfig(cfg mobileConfig) transport.TrafficConfig {
+	return transport.TrafficConfig{
+		MaxPayloadSize: cfg.trafficMaxPayload,
+		MinDelay:       cfg.trafficMinDelay,
+		MaxDelay:       cfg.trafficMaxDelay,
+	}
+}
+
 func normalizeTransport(value string) string {
 	switch value {
 	case dataTransport, "data", "dc":
 		return dataTransport
+	case seiTransport, "sei":
+		return seiTransport
 	case defaultTransport, "vp8":
 		return defaultTransport
 	default:
@@ -792,6 +870,13 @@ func durationFromMillisOrDefault(value int, def time.Duration) time.Duration {
 		return def
 	}
 	return d
+}
+
+func durationFromMillisOrZero(value int) time.Duration {
+	if value <= 0 {
+		return 0
+	}
+	return time.Duration(value) * time.Millisecond
 }
 
 // logBridge adapts LogWriter to io.Writer.

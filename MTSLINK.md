@@ -7,11 +7,17 @@ and carries VPN traffic through H.264 SEI payloads.
 Recommended VPN transport:
 
 ```text
-mtslink + seichannel
+mtslink + seichannel + multipath
 ```
 
 `videochannel` is still available for legacy visible-video diagnostics, but it
 is not the default VPN path.
+
+For browser traffic, one visual SEI stream is too narrow. Use 10-16 lanes for
+normal testing. The lane pool starts several independent MTS Link guest bots in
+the same room and tags each SEI frame with a lane id, so each smux session sees
+only its own H.264 SEI packets. Old single-lane links still work because
+`multipath.lanes` is opt-in.
 
 ## Room Link
 
@@ -49,8 +55,18 @@ sei:
   ack_timeout_ms: 10000
 liveness:
   interval: 20s
-  timeout: 60s
-  failures: 3
+  timeout: 15s
+  failures: 6
+traffic:
+  max_payload_size: 5600
+  min_delay: 4ms
+  max_delay: 18ms
+multipath:
+  lanes: 12
+  control_lanes: 1
+  connect_parallelism: 2
+  min_ready: 4
+  max_streams_per_lane: 3
 ffmpeg: "ffmpeg"
 debug: false
 ```
@@ -66,13 +82,13 @@ Run:
 Conservative default:
 
 ```text
-olcrtc://mtslink?seichannel<fps=30&batch=8&frag=700&ack-ms=10000&liveness-interval=20s&liveness-timeout=60s&liveness-failures=3&mts-peer-update=1&mts-silent-audio=1&mts-force-video=1>@https%3A%2F%2Fmy.mts-link.ru%2Fj%2F167846474%2F19645959806#64_hex_key_here$MTS%20Link
+olcrtc://mtslink?seichannel<fps=30&batch=8&frag=700&ack-ms=10000&liveness-interval=20s&liveness-timeout=15s&liveness-failures=6&traffic-max-payload=5600&traffic-min-delay=4ms&traffic-max-delay=18ms&mc-lanes=12&mc-control-lanes=1&mc-connect-parallel=2&mc-min-ready=4&mc-max-streams-per-lane=3&mts-peer-update=1&mts-silent-audio=1&mts-force-video=1>@https%3A%2F%2Fmy.mts-link.ru%2Fj%2F167846474%2F19645959806#64_hex_key_here$MTS%20Link
 ```
 
 Wider lab profile:
 
 ```text
-olcrtc://mtslink?seichannel<fps=60&batch=64&frag=900&ack-ms=2000&liveness-interval=20s&liveness-timeout=60s&liveness-failures=3&mts-peer-update=1&mts-silent-audio=1&mts-force-video=1>@https%3A%2F%2Fmy.mts-link.ru%2Fj%2F167846474%2F19645959806#64_hex_key_here$MTS%20Link
+olcrtc://mtslink?seichannel<fps=60&batch=64&frag=900&ack-ms=2000&liveness-interval=20s&liveness-timeout=15s&liveness-failures=6&traffic-max-payload=7200&traffic-min-delay=4ms&traffic-max-delay=18ms&mc-lanes=16&mc-control-lanes=1&mc-connect-parallel=3&mc-min-ready=8&mc-max-streams-per-lane=3&mts-peer-update=1&mts-silent-audio=1&mts-force-video=1>@https%3A%2F%2Fmy.mts-link.ru%2Fj%2F167846474%2F19645959806#64_hex_key_here$MTS%20Link
 ```
 
 The MTS Link room URL is percent-encoded after `@` so `https://...` does not
@@ -84,15 +100,22 @@ The current fork is intentionally conservative for MTS Link:
 
 - `seichannel` ACKs individual fragments and retransmits only missing
   fragments.
-- MTS Link `seichannel` liveness defaults are `20s` interval, `60s` timeout,
-  and `3` failures.
-- One smux frame is capped to a small SEI burst: `fragment_size * 3`, capped at
-  7 KiB.
-- The client limits MTS Link `seichannel` to three concurrent SOCKS tunnels to
-  reduce browser preconnect storms.
-- Do not set `traffic-max-payload` or `traffic-min-delay` unless debugging a
-  specific room. The transport now sizes smux frames from the SEI fragment
-  limit and accounts for smux plus crypto overhead.
+- MTS Link `seichannel` liveness defaults in XLTD clients are `20s` interval,
+  `15s` timeout, and `6` failures.
+- `traffic.max_payload_size` should be at least `fragment_size * 8`. The
+  example above uses `700 * 8 = 5600`.
+- `multipath.lanes` enables the v2 SEI lane header. Both peers must use the
+  same lane count. Leave it unset for legacy single-lane links.
+
+## Multipath Parameters
+
+| URI key | YAML field | Recommended |
+| --- | --- | --- |
+| `mc-lanes` | `multipath.lanes` | `12`, use `16` for wider lab runs |
+| `mc-control-lanes` | `multipath.control_lanes` | `1` |
+| `mc-connect-parallel` | `multipath.connect_parallelism` | `2` or `3` |
+| `mc-min-ready` | `multipath.min_ready` | `4` for 12 lanes, `8` for 16 lanes |
+| `mc-max-streams-per-lane` | `multipath.max_streams_per_lane` | `3` |
 
 ## Diagnostics
 

@@ -34,6 +34,7 @@ const (
 	sampleBuilderMaxLate              = 128
 	protocolMagic              uint32 = 0x4f564331 // OVC1
 	protocolVersion            byte   = 1
+	protocolVersionLane        byte   = 2
 	frameTypeData              byte   = 1
 	frameTypeAck               byte   = 2
 	frameTypeHello             byte   = 3
@@ -62,6 +63,7 @@ var (
 
 type transportFrame struct {
 	typ       byte
+	laneID    uint16
 	seq       uint32
 	crc       uint32
 	totalLen  uint32
@@ -104,6 +106,7 @@ type streamTransport struct {
 	ackTimeout    time.Duration
 	frameInterval time.Duration
 	batchSize     int
+	laneID        uint16
 }
 
 // New creates a seichannel transport backed by a carrier.
@@ -166,6 +169,7 @@ func New(ctx context.Context, cfg transport.Config) (transport.Transport, error)
 		ackTimeout:    time.Duration(opts.AckTimeoutMS) * time.Millisecond,
 		frameInterval: time.Second / time.Duration(opts.FPS),
 		batchSize:     opts.BatchSize,
+		laneID:        opts.LaneID,
 	}
 
 	if err := stream.AddTrack(track); err != nil {
@@ -215,7 +219,7 @@ func (p *streamTransport) Send(data []byte) error {
 	ackTimeout := p.perAttemptAckTimeout(len(fragments))
 	for range maxSendAttempts {
 		for _, idx := range pending {
-			frame := encodeDataFrame(seq, crc, len(data), idx, len(fragments), fragments[idx])
+			frame := p.encodeDataFrame(seq, crc, len(data), idx, len(fragments), fragments[idx])
 			if err := p.enqueueFrame(frame, false); err != nil {
 				return err
 			}
@@ -358,7 +362,7 @@ func (p *streamTransport) writerLoop() {
 	ticker := time.NewTicker(p.effectiveFrameInterval())
 	defer ticker.Stop()
 
-	idle := buildVideoAccessUnit(encodeHelloFrame())
+	idle := buildVideoAccessUnit(p.encodeHelloFrame())
 
 	for {
 		select {
@@ -466,6 +470,9 @@ func (p *streamTransport) handleSample(sample []byte) {
 		if err != nil {
 			continue
 		}
+		if !p.acceptFrame(frame) {
+			continue
+		}
 
 		switch frame.typ {
 		case frameTypeHello:
@@ -502,7 +509,7 @@ func (p *streamTransport) handleInboundFrame(frame transportFrame) {
 }
 
 func (p *streamTransport) sendAck(seq, crc uint32, fragIdx uint16) {
-	_ = p.enqueueFrame(encodeAckFrame(seq, crc, fragIdx), true)
+	_ = p.enqueueFrame(p.encodeAckFrame(seq, crc, fragIdx), true)
 }
 
 func (p *streamTransport) resolveAck(seq, crc uint32, fragIdx uint16) {
@@ -511,6 +518,13 @@ func (p *streamTransport) resolveAck(seq, crc uint32, fragIdx uint16) {
 		return
 	}
 	p.fragAcks.Mark(seq, crc, int(fragIdx))
+}
+
+func (p *streamTransport) encodeDataFrame(seq, crc uint32, totalLen, fragIdx, fragTotal int, payload []byte) []byte {
+	if p.laneID != 0 {
+		return encodeLaneDataFrame(p.laneID, seq, crc, totalLen, fragIdx, fragTotal, payload)
+	}
+	return encodeDataFrame(seq, crc, totalLen, fragIdx, fragTotal, payload)
 }
 
 func encodeDataFrame(seq, crc uint32, totalLen, fragIdx, fragTotal int, payload []byte) []byte {
@@ -527,6 +541,28 @@ func encodeDataFrame(seq, crc uint32, totalLen, fragIdx, fragTotal int, payload 
 	return out
 }
 
+func encodeLaneDataFrame(laneID uint16, seq, crc uint32, totalLen, fragIdx, fragTotal int, payload []byte) []byte {
+	out := make([]byte, 24+len(payload))
+	binary.BigEndian.PutUint32(out[0:4], protocolMagic)
+	out[4] = protocolVersionLane
+	out[5] = frameTypeData
+	binary.BigEndian.PutUint16(out[6:8], laneID)
+	binary.BigEndian.PutUint32(out[8:12], seq)
+	binary.BigEndian.PutUint32(out[12:16], crc)
+	binary.BigEndian.PutUint32(out[16:20], uint32(totalLen))  //nolint:gosec,lll // G115: bounded conversion verified by surrounding logic
+	binary.BigEndian.PutUint16(out[20:22], uint16(fragIdx))   //nolint:gosec,lll // G115: bounded conversion verified by surrounding logic
+	binary.BigEndian.PutUint16(out[22:24], uint16(fragTotal)) //nolint:gosec,lll // G115: bounded conversion verified by surrounding logic
+	copy(out[24:], payload)
+	return out
+}
+
+func (p *streamTransport) encodeAckFrame(seq, crc uint32, fragIdx uint16) []byte {
+	if p.laneID != 0 {
+		return encodeLaneAckFrame(p.laneID, seq, crc, fragIdx)
+	}
+	return encodeAckFrame(seq, crc, fragIdx)
+}
+
 func encodeAckFrame(seq, crc uint32, fragIdx uint16) []byte {
 	out := make([]byte, 16)
 	binary.BigEndian.PutUint32(out[0:4], protocolMagic)
@@ -538,12 +574,44 @@ func encodeAckFrame(seq, crc uint32, fragIdx uint16) []byte {
 	return out
 }
 
+func encodeLaneAckFrame(laneID uint16, seq, crc uint32, fragIdx uint16) []byte {
+	out := make([]byte, 18)
+	binary.BigEndian.PutUint32(out[0:4], protocolMagic)
+	out[4] = protocolVersionLane
+	out[5] = frameTypeAck
+	binary.BigEndian.PutUint16(out[6:8], laneID)
+	binary.BigEndian.PutUint32(out[8:12], seq)
+	binary.BigEndian.PutUint32(out[12:16], crc)
+	binary.BigEndian.PutUint16(out[16:18], fragIdx)
+	return out
+}
+
+func (p *streamTransport) encodeHelloFrame() []byte {
+	if p.laneID != 0 {
+		return encodeLaneHelloFrame(p.laneID)
+	}
+	return encodeHelloFrame()
+}
+
 func encodeHelloFrame() []byte {
 	out := make([]byte, 6)
 	binary.BigEndian.PutUint32(out[0:4], protocolMagic)
 	out[4] = protocolVersion
 	out[5] = frameTypeHello
 	return out
+}
+
+func encodeLaneHelloFrame(laneID uint16) []byte {
+	out := make([]byte, 8)
+	binary.BigEndian.PutUint32(out[0:4], protocolMagic)
+	out[4] = protocolVersionLane
+	out[5] = frameTypeHello
+	binary.BigEndian.PutUint16(out[6:8], laneID)
+	return out
+}
+
+func (p *streamTransport) acceptFrame(frame transportFrame) bool {
+	return frame.laneID == p.laneID
 }
 
 func decodeTransportFrame(data []byte) (transportFrame, error) {
@@ -553,11 +621,14 @@ func decodeTransportFrame(data []byte) (transportFrame, error) {
 	if binary.BigEndian.Uint32(data[0:4]) != protocolMagic {
 		return transportFrame{}, ErrUnexpectedMagic
 	}
-	if data[4] != protocolVersion {
+	if data[4] != protocolVersion && data[4] != protocolVersionLane {
 		return transportFrame{}, ErrUnexpectedVersion
 	}
 
 	frame := transportFrame{typ: data[5]}
+	if data[4] == protocolVersionLane {
+		return decodeLaneTransportFrame(data, frame)
+	}
 	switch frame.typ {
 	case frameTypeHello:
 		return frame, nil
@@ -583,6 +654,38 @@ func decodeTransportFrame(data []byte) (transportFrame, error) {
 		frame.fragIdx = binary.BigEndian.Uint16(data[18:20])
 		frame.fragTotal = binary.BigEndian.Uint16(data[20:22])
 		frame.payload = append([]byte(nil), data[22:]...)
+		return frame, nil
+	default:
+		return transportFrame{}, ErrUnexpectedFrameType
+	}
+}
+
+func decodeLaneTransportFrame(data []byte, frame transportFrame) (transportFrame, error) {
+	if len(data) < 8 {
+		return transportFrame{}, ErrFrameTooShort
+	}
+	frame.laneID = binary.BigEndian.Uint16(data[6:8])
+	switch frame.typ {
+	case frameTypeHello:
+		return frame, nil
+	case frameTypeAck:
+		if len(data) < 18 {
+			return transportFrame{}, ErrAckTooShort
+		}
+		frame.seq = binary.BigEndian.Uint32(data[8:12])
+		frame.crc = binary.BigEndian.Uint32(data[12:16])
+		frame.fragIdx = binary.BigEndian.Uint16(data[16:18])
+		return frame, nil
+	case frameTypeData:
+		if len(data) < 24 {
+			return transportFrame{}, ErrDataTooShort
+		}
+		frame.seq = binary.BigEndian.Uint32(data[8:12])
+		frame.crc = binary.BigEndian.Uint32(data[12:16])
+		frame.totalLen = binary.BigEndian.Uint32(data[16:20])
+		frame.fragIdx = binary.BigEndian.Uint16(data[20:22])
+		frame.fragTotal = binary.BigEndian.Uint16(data[22:24])
+		frame.payload = append([]byte(nil), data[24:]...)
 		return frame, nil
 	default:
 		return transportFrame{}, ErrUnexpectedFrameType
