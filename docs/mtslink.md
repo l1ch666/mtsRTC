@@ -14,6 +14,8 @@ Short version:
 - Keep `traffic.max_payload_size >= sei.fragment_size * 8`.
 - URI multipath keys are `mc-lanes`, `mc-control-lanes`,
   `mc-connect-parallel`, `mc-min-ready`, and `mc-max-streams-per-lane`.
+- `script/srv.sh` prompts for these MTS Link multipath, traffic, and liveness
+  values and includes them in both `server.yaml` and the printed client URI.
 - Keep MTS Link room URLs percent-encoded inside `olcrtc://` links.
 - Current XLTD builds let parallel `seichannel` sends progress while one lane
   waits for ACKs, close remote media readers during reconnect, avoid duplicate

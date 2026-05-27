@@ -165,6 +165,7 @@ if [ "$CARRIER" = "mtslink" ]; then
     esac
     MTS_FORCE_VIDEO="${MTS_FORCE_VIDEO:-1}"
     MTS_PEER_UPDATE="${MTS_PEER_UPDATE:-1}"
+    MTS_SILENT_AUDIO="${MTS_SILENT_AUDIO:-1}"
     MTS_DEBUG="${MTS_DEBUG:-1}"
     MTS_VIDEO_CODEC="${MTS_VIDEO_CODEC:-h264}"
     echo "[*] MTS Link selected: transport=$TRANSPORT codec=$MTS_VIDEO_CODEC video_test=${MTS_VIDEO_TEST:-0}"
@@ -303,6 +304,9 @@ VIDEO_CODEC="qrcode"; VIDEO_QR_SIZE=0; VIDEO_QR_RECOVERY="low"
 VIDEO_TILE_MODULE=4; VIDEO_TILE_RS=20
 VP8_FPS=25; VP8_BATCH=1
 SEI_FPS=30; SEI_BATCH=8; SEI_FRAG=700; SEI_ACK=10000
+LIVENESS_INTERVAL="20s"; LIVENESS_TIMEOUT="60s"; LIVENESS_FAILURES=3
+TRAFFIC_MAX_PAYLOAD=5600; TRAFFIC_MIN_DELAY="4ms"; TRAFFIC_MAX_DELAY="18ms"
+MP_LANES=1; MP_CONTROL_LANES=1; MP_CONNECT_PARALLEL=2; MP_MIN_READY=1; MP_MAX_STREAMS=3
 
 if [ "$CARRIER" = "mtslink" ]; then
     VIDEO_W=640
@@ -391,6 +395,53 @@ if [ "$TRANSPORT" = "seichannel" ]; then
 
     read -p "SEI ACK timeout in milliseconds [default: 10000]: " SEIACK_INPUT
     SEI_ACK=${SEIACK_INPUT:-10000}
+
+    if [ "$CARRIER" = "mtslink" ]; then
+        echo ""
+        echo "--- MTS Link multipath / liveness settings ---"
+
+        read -p "Liveness interval [default: 20s]: " LIVEINT_INPUT
+        LIVENESS_INTERVAL=${LIVEINT_INPUT:-20s}
+
+        read -p "Liveness timeout [default: 60s]: " LIVETO_INPUT
+        LIVENESS_TIMEOUT=${LIVETO_INPUT:-60s}
+
+        read -p "Liveness failures [default: 3]: " LIVEFAIL_INPUT
+        LIVENESS_FAILURES=${LIVEFAIL_INPUT:-3}
+
+        if [[ "$SEI_FRAG" =~ ^[0-9]+$ ]]; then
+            TRAFFIC_DEFAULT=$((SEI_FRAG * 8))
+            if [ "$TRAFFIC_DEFAULT" -lt 1600 ]; then
+                TRAFFIC_DEFAULT=1600
+            fi
+        else
+            TRAFFIC_DEFAULT=5600
+        fi
+
+        read -p "Traffic max payload bytes [default: $TRAFFIC_DEFAULT]: " TRAFFIC_PAYLOAD_INPUT
+        TRAFFIC_MAX_PAYLOAD=${TRAFFIC_PAYLOAD_INPUT:-$TRAFFIC_DEFAULT}
+
+        read -p "Traffic min delay [default: 4ms]: " TRAFFIC_MIN_INPUT
+        TRAFFIC_MIN_DELAY=${TRAFFIC_MIN_INPUT:-4ms}
+
+        read -p "Traffic max delay [default: 18ms]: " TRAFFIC_MAX_INPUT
+        TRAFFIC_MAX_DELAY=${TRAFFIC_MAX_INPUT:-18ms}
+
+        read -p "Multipath lanes / bot streams [default: 12]: " MPLANES_INPUT
+        MP_LANES=${MPLANES_INPUT:-12}
+
+        read -p "Control lanes reserved from traffic [default: 1]: " MPCONTROL_INPUT
+        MP_CONTROL_LANES=${MPCONTROL_INPUT:-1}
+
+        read -p "Parallel lane joins [default: 2]: " MPPAR_INPUT
+        MP_CONNECT_PARALLEL=${MPPAR_INPUT:-2}
+
+        read -p "Minimum ready lanes before SOCKS starts [default: 4]: " MPMIN_INPUT
+        MP_MIN_READY=${MPMIN_INPUT:-4}
+
+        read -p "Max streams per data lane [default: 3]: " MPSTREAMS_INPUT
+        MP_MAX_STREAMS=${MPSTREAMS_INPUT:-3}
+    fi
 fi
 
 echo ""
@@ -544,6 +595,24 @@ sei:
   fragment_size: $SEI_FRAG
   ack_timeout_ms: $SEI_ACK
 EOF
+    if [ "$CARRIER" = "mtslink" ]; then
+        cat >> "$CONFIG_FILE" <<EOF
+liveness:
+  interval: $LIVENESS_INTERVAL
+  timeout: $LIVENESS_TIMEOUT
+  failures: $LIVENESS_FAILURES
+traffic:
+  max_payload_size: $TRAFFIC_MAX_PAYLOAD
+  min_delay: $TRAFFIC_MIN_DELAY
+  max_delay: $TRAFFIC_MAX_DELAY
+multipath:
+  lanes: $MP_LANES
+  control_lanes: $MP_CONTROL_LANES
+  connect_parallelism: $MP_CONNECT_PARALLEL
+  min_ready: $MP_MIN_READY
+  max_streams_per_lane: $MP_MAX_STREAMS
+EOF
+    fi
 fi
 
 if [ "$TRANSPORT" = "videochannel" ]; then
@@ -579,6 +648,9 @@ if [ -n "${MTS_FORCE_VIDEO:-}" ]; then
 fi
 if [ -n "${MTS_PEER_UPDATE:-}" ]; then
     PODMAN_ENV_ARGS+=("-e" "MTS_PEER_UPDATE=$MTS_PEER_UPDATE")
+fi
+if [ -n "${MTS_SILENT_AUDIO:-}" ]; then
+    PODMAN_ENV_ARGS+=("-e" "MTS_SILENT_AUDIO=$MTS_SILENT_AUDIO")
 fi
 if [ -n "${MTS_VIDEO_TEST:-}" ]; then
     PODMAN_ENV_ARGS+=("-e" "MTS_VIDEO_TEST=$MTS_VIDEO_TEST")
@@ -629,6 +701,9 @@ if [ "$TRANSPORT" = "vp8channel" ]; then
     TRANSPORT_PAYLOAD="<vp8-fps=${VP8_FPS}&vp8-batch=${VP8_BATCH}>"
 elif [ "$TRANSPORT" = "seichannel" ]; then
     TRANSPORT_PAYLOAD="<fps=${SEI_FPS}&batch=${SEI_BATCH}&frag=${SEI_FRAG}&ack-ms=${SEI_ACK}>"
+    if [ "$CARRIER" = "mtslink" ]; then
+        TRANSPORT_PAYLOAD="<fps=${SEI_FPS}&batch=${SEI_BATCH}&frag=${SEI_FRAG}&ack-ms=${SEI_ACK}&liveness-interval=${LIVENESS_INTERVAL}&liveness-timeout=${LIVENESS_TIMEOUT}&liveness-failures=${LIVENESS_FAILURES}&traffic-max-payload=${TRAFFIC_MAX_PAYLOAD}&traffic-min-delay=${TRAFFIC_MIN_DELAY}&traffic-max-delay=${TRAFFIC_MAX_DELAY}&mc-lanes=${MP_LANES}&mc-control-lanes=${MP_CONTROL_LANES}&mc-connect-parallel=${MP_CONNECT_PARALLEL}&mc-min-ready=${MP_MIN_READY}&mc-max-streams-per-lane=${MP_MAX_STREAMS}&mts-peer-update=${MTS_PEER_UPDATE:-1}&mts-silent-audio=${MTS_SILENT_AUDIO:-1}&mts-force-video=${MTS_FORCE_VIDEO:-1}>"
+    fi
 elif [ "$TRANSPORT" = "videochannel" ]; then
     TRANSPORT_PAYLOAD="<video-w=${VIDEO_W}&video-h=${VIDEO_H}&video-fps=${VIDEO_FPS}&video-bitrate=${VIDEO_BITRATE}&video-hw=${VIDEO_HW}&video-codec=${VIDEO_CODEC}>"
     if [ "$VIDEO_CODEC" = "tile" ]; then
