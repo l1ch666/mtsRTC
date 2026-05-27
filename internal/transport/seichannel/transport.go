@@ -29,7 +29,9 @@ const (
 	defaultFrameInterval              = 50 * time.Millisecond
 	defaultFPS                        = 20
 	defaultBatchSize                  = 1
-	defaultConnectTimeout             = 30 * time.Second
+	// mtslink HTTP bootstrap per lane can take 10-25 s in real-world conditions.
+	// 45 s gives enough margin without blocking reconnect loops for too long.
+	defaultConnectTimeout = 45 * time.Second
 	maxSendAttempts                   = 8
 	sampleBuilderMaxLate              = 128
 	protocolMagic              uint32 = 0x4f564331 // OVC1
