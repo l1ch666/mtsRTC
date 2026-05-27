@@ -8,8 +8,10 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
+	"strings"
 	"sync"
 	"time"
 
@@ -55,11 +57,17 @@ const (
 	defaultTransport   = "vp8channel"
 	dataTransport      = "datachannel"
 	seiTransport       = "seichannel"
+	videoTransport     = "videochannel"
 	defaultDNSServer   = "1.1.1.1:53"
 	defaultHTTPPingURL = "https://www.google.com/generate_204"
 	carrierWBStream    = "wbstream"
 	carrierJazz        = "jazz"
 	roomURLAny         = "any"
+)
+
+const (
+	dnsProbeTimeout = 500 * time.Millisecond
+	dnsProbeName    = "stream.wb.ru"
 )
 
 const (
@@ -138,6 +146,50 @@ func SetDNS(dnsServer string) {
 	defer mu.Unlock()
 	ensureDefaultConfigLocked()
 	defaults.dnsServer = dnsServer
+}
+
+// SetAutoDNS picks the fastest responding DNS server from a comma-separated
+// list of candidates by probing probeHost. The chosen server is stored as the
+// active DNS and also returned to the caller. Falls back to defaultDNSServer
+// when no candidates respond or the list is empty.
+func SetAutoDNS(candidatesCsv, probeHost string) string {
+	mu.Lock()
+	ensureDefaultConfigLocked()
+	mu.Unlock()
+
+	candidates := parseDNSCandidates(candidatesCsv)
+	if len(candidates) == 0 {
+		mu.Lock()
+		defaults.dnsServer = defaultDNSServer
+		mu.Unlock()
+		return defaultDNSServer
+	}
+
+	host := strings.TrimSpace(probeHost)
+	if host == "" {
+		host = dnsProbeName
+	}
+
+	best := probeBestDNS(candidates, host)
+	if best == "" {
+		best = candidates[0]
+	}
+
+	mu.Lock()
+	defaults.dnsServer = best
+	mu.Unlock()
+	return best
+}
+
+// GetAutoDNSUpstream returns the DNS server currently selected for the tunnel.
+func GetAutoDNSUpstream() string {
+	mu.Lock()
+	defer mu.Unlock()
+	ensureDefaultConfigLocked()
+	if defaults.dnsServer == "" {
+		return defaultDNSServer
+	}
+	return defaults.dnsServer
 }
 
 // SetVP8Options configures vp8channel.
@@ -278,18 +330,15 @@ func Check(
 		doneCh <- runClientWithReady(
 			ctx,
 			client.Config{
-				Transport: transportName,
-				Carrier:   carrierName,
-				RoomURL:   buildRoomURL(carrierName, roomID),
-				KeyHex:    keyHex,
-				DeviceID:  clientID,
-				LocalAddr: fmt.Sprintf("127.0.0.1:%d", socksPort),
-				DNSServer: defaultDNSServer,
-				TransportOptions: vp8channel.Options{
-					FPS:       clampAtLeastOne(vp8FPS, 120),
-					BatchSize: clampAtLeastOne(vp8BatchSize, 64),
-				},
-				Liveness: livenessConfig(cfg),
+				Transport:        transportName,
+				Carrier:          carrierName,
+				RoomURL:          buildRoomURL(carrierName, roomID),
+				KeyHex:           keyHex,
+				DeviceID:         clientID,
+				LocalAddr:        fmt.Sprintf("127.0.0.1:%d", socksPort),
+				DNSServer:        defaultDNSServer,
+				TransportOptions: buildCheckOptions(transportName, vp8FPS, vp8BatchSize),
+				Liveness:         livenessConfig(cfg),
 			},
 			func() {
 				readyOnce.Do(func() {
@@ -368,18 +417,15 @@ func Ping(
 		doneCh <- runClientWithReady(
 			ctx,
 			client.Config{
-				Transport: transportName,
-				Carrier:   carrierName,
-				RoomURL:   buildRoomURL(carrierName, roomID),
-				KeyHex:    keyHex,
-				DeviceID:  clientID,
-				LocalAddr: fmt.Sprintf("127.0.0.1:%d", socksPort),
-				DNSServer: defaultDNSServer,
-				TransportOptions: vp8channel.Options{
-					FPS:       clampAtLeastOne(vp8FPS, 120),
-					BatchSize: clampAtLeastOne(vp8BatchSize, 64),
-				},
-				Liveness: livenessConfig(cfg),
+				Transport:        transportName,
+				Carrier:          carrierName,
+				RoomURL:          buildRoomURL(carrierName, roomID),
+				KeyHex:           keyHex,
+				DeviceID:         clientID,
+				LocalAddr:        fmt.Sprintf("127.0.0.1:%d", socksPort),
+				DNSServer:        defaultDNSServer,
+				TransportOptions: buildCheckOptions(transportName, vp8FPS, vp8BatchSize),
+				Liveness:         livenessConfig(cfg),
 			},
 			func() {
 				readyOnce.Do(func() {
@@ -782,6 +828,8 @@ func transportOptionsFor(cfg mobileConfig) transport.Options {
 			FragmentSize: cfg.seiFragmentSize,
 			AckTimeoutMS: cfg.seiAckTimeoutMS,
 		}
+	case videoTransport:
+		return nil
 	case dataTransport, defaultTransport:
 		return vp8channel.Options{
 			FPS:       cfg.vp8FPS,
@@ -789,6 +837,32 @@ func transportOptionsFor(cfg mobileConfig) transport.Options {
 		}
 	default:
 		return nil
+	}
+}
+
+// buildCheckOptions picks the TransportOptions appropriate for a single
+// short-lived Check/Ping run. It honours the typed contract expected by each
+// transport (vp8channel vs seichannel) so that callers don't have to thread
+// SEI parameters through Check()/Ping() signatures.
+func buildCheckOptions(transportName string, vp8FPS, vp8BatchSize int) transport.Options {
+	switch normalizeTransport(transportName) {
+	case seiTransport:
+		mu.Lock()
+		cfg := defaults
+		mu.Unlock()
+		return seichannel.Options{
+			FPS:          cfg.seiFPS,
+			BatchSize:    cfg.seiBatchSize,
+			FragmentSize: cfg.seiFragmentSize,
+			AckTimeoutMS: cfg.seiAckTimeoutMS,
+		}
+	case videoTransport:
+		return nil
+	default:
+		return vp8channel.Options{
+			FPS:       clampAtLeastOne(vp8FPS, 120),
+			BatchSize: clampAtLeastOne(vp8BatchSize, 64),
+		}
 	}
 }
 
@@ -801,16 +875,111 @@ func trafficConfig(cfg mobileConfig) transport.TrafficConfig {
 }
 
 func normalizeTransport(value string) string {
-	switch value {
-	case dataTransport, "data", "dc":
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case dataTransport, "data", "dc", "data-channel", "data_channel":
 		return dataTransport
-	case seiTransport, "sei":
+	case seiTransport, "sei", "sei-channel", "sei_channel":
 		return seiTransport
-	case defaultTransport, "vp8":
+	case videoTransport, "video", "vid", "video-channel", "video_channel":
+		return videoTransport
+	case defaultTransport, "vp8", "vp8-channel", "vp8_channel":
 		return defaultTransport
 	default:
 		return defaultTransport
 	}
+}
+
+func parseDNSCandidates(csv string) []string {
+	if csv == "" {
+		return nil
+	}
+	seen := make(map[string]struct{})
+	out := make([]string, 0, 4)
+	for _, raw := range strings.Split(csv, ",") {
+		addr := normalizeDNSCandidate(raw)
+		if addr == "" {
+			continue
+		}
+		if _, ok := seen[addr]; ok {
+			continue
+		}
+		seen[addr] = struct{}{}
+		out = append(out, addr)
+	}
+	return out
+}
+
+func normalizeDNSCandidate(raw string) string {
+	addr := strings.TrimSpace(raw)
+	if addr == "" {
+		return ""
+	}
+	if _, _, err := net.SplitHostPort(addr); err == nil {
+		return addr
+	}
+	return net.JoinHostPort(addr, "53")
+}
+
+func probeBestDNS(candidates []string, probeHost string) string {
+	if len(candidates) == 0 {
+		return ""
+	}
+	type result struct {
+		addr    string
+		elapsed time.Duration
+	}
+	resCh := make(chan result, len(candidates))
+	for _, addr := range candidates {
+		go func(addr string) {
+			started := time.Now()
+			if probeDNS(addr, probeHost, dnsProbeTimeout) {
+				resCh <- result{addr: addr, elapsed: time.Since(started)}
+				return
+			}
+			resCh <- result{}
+		}(addr)
+	}
+
+	var best result
+	deadline := time.NewTimer(dnsProbeTimeout + 100*time.Millisecond)
+	defer deadline.Stop()
+	for range candidates {
+		select {
+		case r := <-resCh:
+			if r.addr == "" {
+				continue
+			}
+			if best.addr == "" || r.elapsed < best.elapsed {
+				best = r
+			}
+		case <-deadline.C:
+			if best.addr != "" {
+				return best.addr
+			}
+			return candidates[0]
+		}
+	}
+	if best.addr == "" {
+		return candidates[0]
+	}
+	return best.addr
+}
+
+func probeDNS(server, host string, timeout time.Duration) bool {
+	resolver := &net.Resolver{
+		PreferGo: true,
+		Dial: func(ctx context.Context, network, _ string) (net.Conn, error) {
+			d := net.Dialer{Timeout: timeout}
+			return d.DialContext(ctx, network, server)
+		},
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	addrs, err := resolver.LookupHost(ctx, host)
+	if err != nil {
+		return false
+	}
+	return len(addrs) > 0
 }
 
 func normalizeCarrier(carrierName string) string {

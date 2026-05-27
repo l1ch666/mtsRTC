@@ -461,7 +461,20 @@ func (p *streamTransport) handleRemoteTrack(track *webrtc.TrackRemote, _ *webrtc
 		}
 
 		for {
-			_ = track.SetReadDeadline(time.Now().Add(time.Second))
+			if p.closed.Load() {
+				sb.Flush()
+				popSamples()
+				return
+			}
+			select {
+			case <-p.closeCh:
+				sb.Flush()
+				popSamples()
+				return
+			default:
+			}
+
+			_ = track.SetReadDeadline(time.Now().Add(250 * time.Millisecond))
 			packet, _, err := track.ReadRTP()
 			if err != nil {
 				select {

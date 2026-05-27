@@ -109,6 +109,7 @@ type Session struct {
 
 	sendQueue chan []byte
 	done      chan struct{}
+	ctx       context.Context
 	cancel    context.CancelFunc
 
 	videoTestCancel context.CancelFunc
@@ -147,7 +148,7 @@ func New(_ context.Context, cfg engine.Config) (engine.Session, error) {
 	if name == "" {
 		name = defaultGuestName
 	}
-	_, cancel := context.WithCancel(context.Background())
+	sessionCtx, cancel := context.WithCancel(context.Background())
 	client := authMTSLink.NewClient(os.Getenv("MTS_COOKIE"))
 	client.GuestName = name
 	client.DeviceID = extra[authMTSLink.ExtraDID]
@@ -166,6 +167,7 @@ func New(_ context.Context, cfg engine.Config) (engine.Session, error) {
 		connectedTracks: make(map[webrtc.TrackLocal]bool),
 		sendQueue:       make(chan []byte, defaultSendQueueSize),
 		done:            make(chan struct{}),
+		ctx:             sessionCtx,
 		cancel:          cancel,
 	}, nil
 }
@@ -492,9 +494,12 @@ func (s *Session) pumpSilentAudio(track *webrtc.TrackLocalStaticSample) {
 	ticker := time.NewTicker(20 * time.Millisecond)
 	defer ticker.Stop()
 	silence := []byte{0xf8, 0xff, 0xfe}
+	ctx := s.ctx
 	for {
 		select {
 		case <-s.done:
+			return
+		case <-ctx.Done():
 			return
 		case <-ticker.C:
 			if err := track.WriteSample(media.Sample{Data: silence, Duration: 20 * time.Millisecond}); err != nil {
@@ -715,8 +720,13 @@ func (s *Session) pinLoop(peerID string) {
 		select {
 		case <-s.done:
 			return
+		case <-s.ctx.Done():
+			return
 		case <-ticker.C:
-			if err := s.client.Pin(context.Background(), peerID); err != nil {
+			pinCtx, cancel := context.WithTimeout(s.ctx, 5*time.Second)
+			err := s.client.Pin(pinCtx, peerID)
+			cancel()
+			if err != nil {
 				logger.Debugf("mtslink pin: %v", err)
 			}
 		}
@@ -746,7 +756,9 @@ func (s *Session) Close() error {
 		if pc != nil {
 			_ = pc.Close()
 		}
-		_ = s.client.AudioVideoControl(context.Background(), s.conferenceID, false)
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		_ = s.client.AudioVideoControl(shutdownCtx, s.conferenceID, false)
+		shutdownCancel()
 		stopped := make(chan struct{})
 		go func() {
 			s.wg.Wait()

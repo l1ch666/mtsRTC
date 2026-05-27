@@ -68,6 +68,33 @@ Leave `multipath.lanes` unset only for legacy single-lane compatibility.
 
 Full setup and diagnostics: [MTSLINK.md](MTSLINK.md).
 
+## Recent stability fixes
+
+The mobile API gained the contract the XLTD VPN Android client expects:
+
+- `mobile.SetAutoDNS(candidatesCsv, probeHost) string` — picks the fastest
+  responding upstream from a comma-separated DNS list, falls back to the first
+  candidate, then to `1.1.1.1:53`. Pairs with `GetAutoDNSUpstream()`. Without
+  these symbols `OlcVpnService.runVpnOnce` crashed on every start with
+  `NoSuchMethodException`.
+- `normalizeTransport` now recognises `videochannel` (and `video`, `vid`,
+  `video-channel`, `video_channel`). It used to silently rewrite the carrier
+  to `vp8channel` for any unknown value.
+- `Check()` and `Ping()` build `TransportOptions` per transport via
+  `buildCheckOptions`. SEI probes now pass `seichannel.Options`, video probes
+  pass `nil`, VP8/data probes still pass `vp8channel.Options`. Previously a
+  hard-coded `vp8channel.Options` value was sent into every transport, which
+  the SEI transport rejected with `ErrOptionsTypeMismatch`.
+
+Transport-side hardening:
+
+- `seichannel` remote-track goroutine now polls `closed`/`closeCh` at the top
+  of every loop iteration and reads with a 250 ms deadline, bounding the
+  per-goroutine exit latency under reconnect storms.
+- `internal/engine/mtslink` threads a cancellable context through silent-audio
+  pumping, the pin loop, and the shutdown `AudioVideoControl` call; `Pin()`
+  is bounded by a 5 s deadline so close cannot strand a 25 s in-flight HTTP.
+
 ## Build Source Selection
 
 The quick scripts default to the local checkout or unpacked archive. They only
