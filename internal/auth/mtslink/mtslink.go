@@ -28,9 +28,6 @@ func (Provider) Issue(ctx context.Context, cfg auth.Config) (auth.Credentials, e
 
 	client := NewClient(os.Getenv("MTS_COOKIE"))
 	client.GuestName = cfg.Name
-	if client.GuestName == "" {
-		client.GuestName = "olcrtc-mtslink"
-	}
 
 	bootstrap, err := client.Bootstrap(ctx, roomURL, "", "", "")
 	if err != nil {

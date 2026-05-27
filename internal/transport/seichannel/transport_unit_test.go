@@ -205,6 +205,81 @@ func TestSendAckAndClosePaths(t *testing.T) {
 	}
 }
 
+func TestSendDoesNotHoldMutexWhileAwaitingAck(t *testing.T) {
+	tr := &streamTransport{
+		stream:       &fakeVideoStream{canSend: true},
+		outbound:     make(chan []byte, 8),
+		outboundAck:  make(chan []byte, 8),
+		closeCh:      make(chan struct{}),
+		writerDone:   make(chan struct{}),
+		fragAcks:     newFragAckTracker(),
+		fragmentSize: 64,
+		ackTimeout:   2 * time.Second,
+	}
+	defer func() { _ = tr.Close() }()
+
+	firstDone := make(chan error, 1)
+	go func() { firstDone <- tr.Send([]byte("first")) }()
+
+	select {
+	case <-tr.outbound:
+	case <-time.After(time.Second):
+		t.Fatal("first Send did not enqueue")
+	}
+
+	secondDone := make(chan error, 1)
+	go func() { secondDone <- tr.Send([]byte("second")) }()
+
+	select {
+	case <-tr.outbound:
+	case <-time.After(150 * time.Millisecond):
+		t.Fatal("second Send was blocked while first Send waited for ACK")
+	}
+
+	_ = tr.Close()
+	for _, ch := range []chan error{firstDone, secondDone} {
+		select {
+		case err := <-ch:
+			if !errors.Is(err, ErrTransportClosed) {
+				t.Fatalf("Send() error = %v, want %v", err, ErrTransportClosed)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("Send() did not return after Close")
+		}
+	}
+}
+
+func TestCloseWaitsForRemoteReaders(t *testing.T) {
+	tr := &streamTransport{
+		stream:      &fakeVideoStream{canSend: true},
+		outbound:    make(chan []byte, 1),
+		outboundAck: make(chan []byte, 1),
+		closeCh:     make(chan struct{}),
+		writerDone:  make(chan struct{}),
+	}
+	tr.remoteReaders.Add(1)
+	readerDone := make(chan struct{})
+	go func() {
+		defer tr.remoteReaders.Done()
+		<-tr.closeCh
+		time.Sleep(20 * time.Millisecond)
+		close(readerDone)
+	}()
+
+	start := time.Now()
+	if err := tr.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+	if elapsed := time.Since(start); elapsed < 20*time.Millisecond {
+		t.Fatalf("Close() returned before remote reader finished: %v", elapsed)
+	}
+	select {
+	case <-readerDone:
+	default:
+		t.Fatal("remote reader did not finish")
+	}
+}
+
 func TestPerAttemptAckTimeoutScalesWithFragments(t *testing.T) {
 	tr := &streamTransport{
 		ackTimeout:    time.Second,

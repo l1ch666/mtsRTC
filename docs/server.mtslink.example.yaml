@@ -15,8 +15,8 @@ sei:
   ack_timeout_ms: 10000
 liveness:
   interval: 20s
-  timeout: 15s
-  failures: 6
+  timeout: 60s
+  failures: 3
 traffic:
   max_payload_size: 5600
   min_delay: 4ms

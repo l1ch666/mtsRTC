@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 )
@@ -124,8 +125,10 @@ func (c *Client) Bootstrap(ctx context.Context, roomURL, explicitUserID, explici
 	c.fetchJoinTokens(ctx, room, &b)
 
 	// Some deployments return the publish token only after the conference exists.
-	if b.PublishToken == "" || b.JoinToken == "" {
-		c.createConference(ctx, room, &b)
+	if b.JoinToken == "" {
+		if b.ConferenceID == "" {
+			c.createConference(ctx, room, &b)
+		}
 		c.fetchJoinTokens(ctx, room, &b)
 	}
 
@@ -384,7 +387,7 @@ func (c *Client) createConference(ctx context.Context, room RoomInfo, b *Bootstr
 				continue
 			}
 			c.absorb(fmt.Sprintf("conferenceForm%d", attempt), js, b)
-			if b.ConferenceID != "" && b.PublishToken != "" {
+			if b.ConferenceID != "" {
 				return
 			}
 		}
@@ -414,7 +417,7 @@ func (c *Client) createConference(ctx context.Context, room RoomInfo, b *Bootstr
 		js, _, err := c.postJSONWithReferer(ctx, endpoint, payload, referer)
 		if err == nil {
 			c.absorb(fmt.Sprintf("conferenceJSON%d", attempt), js, b)
-			if b.ConferenceID != "" && b.PublishToken != "" {
+			if b.ConferenceID != "" {
 				return
 			}
 		} else {
@@ -455,6 +458,10 @@ func (c *Client) fetchJoinTokens(ctx context.Context, room RoomInfo, b *Bootstra
 				b.Raw[fmt.Sprintf("joinTokenGETError%d", attempt)] = err.Error()
 			}
 		}
+	}
+
+	if b.ConferenceID == "" && b.UserID == "" {
+		return
 	}
 
 	// Fallback: POST for variants that bind token to conference/user.
@@ -924,28 +931,26 @@ func firstString(m map[string]any, keys ...string) string {
 }
 
 func findFirstKey(v any, keys ...string) string {
-	want := map[string]bool{}
-	for _, k := range keys {
-		want[strings.ToLower(k)] = true
-	}
 	var walk func(any) string
 	walk = func(x any) string {
 		switch t := x.(type) {
 		case map[string]any:
-			for k, v := range t {
-				if want[strings.ToLower(k)] {
-					switch vv := v.(type) {
-					case string:
-						return vv
-					case float64:
-						return fmt.Sprintf("%.0f", vv)
-					case json.Number:
-						return vv.String()
+			for _, want := range keys {
+				for k, v := range t {
+					if strings.EqualFold(k, want) {
+						if s := stringifyJSONScalar(v); s != "" {
+							return s
+						}
 					}
 				}
 			}
-			for _, v := range t {
-				if r := walk(v); r != "" {
+			mapKeys := make([]string, 0, len(t))
+			for k := range t {
+				mapKeys = append(mapKeys, k)
+			}
+			sort.Strings(mapKeys)
+			for _, k := range mapKeys {
+				if r := walk(t[k]); r != "" {
 					return r
 				}
 			}
@@ -959,6 +964,19 @@ func findFirstKey(v any, keys ...string) string {
 		return ""
 	}
 	return walk(v)
+}
+
+func stringifyJSONScalar(v any) string {
+	switch vv := v.(type) {
+	case string:
+		return vv
+	case float64:
+		return fmt.Sprintf("%.0f", vv)
+	case json.Number:
+		return vv.String()
+	default:
+		return ""
+	}
 }
 
 func firstMeaningfulString(m map[string]any, keys ...string) string {
@@ -979,11 +997,4 @@ func (c *Client) debugf(format string, args ...any) {
 		return
 	}
 	_, _ = fmt.Fprintf(os.Stderr, "[mtslink] "+format+"\n", args...)
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }

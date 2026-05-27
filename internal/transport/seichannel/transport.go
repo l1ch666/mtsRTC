@@ -99,6 +99,7 @@ type streamTransport struct {
 	writerUp      atomic.Bool
 	peerReady     atomic.Bool
 	sendMu        sync.Mutex
+	remoteReaders sync.WaitGroup
 	startWriter   sync.Once
 	fragAcks      *fragAckTracker
 	reassembler   *common.Reassembler
@@ -204,12 +205,11 @@ func (p *streamTransport) Send(data []byte) error {
 	}
 
 	p.sendMu.Lock()
-	defer p.sendMu.Unlock()
-
 	seq := p.nextSeq.Add(1)
 	crc := crc32.ChecksumIEEE(data)
 	fragments := common.FragmentPayload(data, p.effectiveFragmentSize())
 	waiter := p.fragAcks.Register(seq, crc, len(fragments))
+	p.sendMu.Unlock()
 	defer p.fragAcks.Unregister(seq)
 
 	pending := make([]int, len(fragments))
@@ -278,11 +278,24 @@ func (p *streamTransport) Close() error {
 		if p.writerUp.Load() {
 			<-p.writerDone
 		}
+		p.waitRemoteReaders()
 		if err := p.stream.Close(); err != nil {
 			return fmt.Errorf("close stream: %w", err)
 		}
 	}
 	return nil
+}
+
+func (p *streamTransport) waitRemoteReaders() {
+	done := make(chan struct{})
+	go func() {
+		p.remoteReaders.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+	}
 }
 
 // SetReconnectCallback registers reconnect handling.
@@ -436,7 +449,9 @@ func (p *streamTransport) enqueueFrame(frame []byte, priority bool) error {
 }
 
 func (p *streamTransport) handleRemoteTrack(track *webrtc.TrackRemote, _ *webrtc.RTPReceiver) {
+	p.remoteReaders.Add(1)
 	go func() {
+		defer p.remoteReaders.Done()
 		sb := samplebuilder.New(sampleBuilderMaxLate, &codecs.H264Packet{}, track.Codec().ClockRate)
 
 		popSamples := func() {
@@ -446,8 +461,19 @@ func (p *streamTransport) handleRemoteTrack(track *webrtc.TrackRemote, _ *webrtc
 		}
 
 		for {
+			_ = track.SetReadDeadline(time.Now().Add(time.Second))
 			packet, _, err := track.ReadRTP()
 			if err != nil {
+				select {
+				case <-p.closeCh:
+					sb.Flush()
+					popSamples()
+					return
+				default:
+				}
+				if timeout, ok := err.(interface{ Timeout() bool }); ok && timeout.Timeout() {
+					continue
+				}
 				sb.Flush()
 				popSamples()
 				return
